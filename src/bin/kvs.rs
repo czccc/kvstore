@@ -1,7 +1,9 @@
 // extern crate clap;
 // use clap::{App, Arg, SubCommand};
 
-use std::process::exit;
+use kvs::{KvStore, Result};
+use serde::{Deserialize, Serialize};
+use std::{env::current_dir, process::exit};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -16,7 +18,7 @@ struct Opt {
     cmd: Command,
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, StructOpt, Deserialize, Serialize)]
 enum Command {
     #[structopt(about = "Get the string value of a given string key")]
     Get {
@@ -37,57 +39,30 @@ enum Command {
     },
 }
 
-
-fn main() {
+fn main() -> Result<()> {
     let opt = Opt::from_args();
     match opt.cmd {
-        Command::Get { key: _ } => {
-            eprintln!("unimplemented");
-            exit(1);
+        Command::Get { key } => {
+            let mut store = KvStore::open(current_dir()?)?;
+            match store.get(key)? {
+                Some(value) => println!("{}", value),
+                None => println!("Key not found"),
+            }
         }
-        Command::Set { key: _, value: _ } => {
-            eprintln!("unimplemented");
-            exit(1);
+        Command::Set { key, value } => {
+            let mut store = KvStore::open(current_dir()?)?;
+            store.set(key, value)?;
         }
-        Command::Rm { key: _ } => {
-            eprintln!("unimplemented");
-            exit(1);
+        Command::Rm { key } => {
+            let mut store = KvStore::open(current_dir()?)?;
+            match store.remove(key) {
+                Ok(_) => exit(0),
+                Err(e) => {
+                    println!("{}", e);
+                    exit(1)
+                }
+            }
         }
-    }
-    // let matches = App::new(env!("CARGO_PKG_NAME"))
-    //     .version(env!("CARGO_PKG_VERSION"))
-    //     .author(env!("CARGO_PKG_AUTHORS"))
-    //     .about(env!("CARGO_PKG_DESCRIPTION"))
-    //     .subcommand(
-    //         SubCommand::with_name("get")
-    //             .about("Get the string value of a given string key")
-    //             .arg(Arg::with_name("key").help("A string key")),
-    //     )
-    //     .subcommand(
-    //         SubCommand::with_name("set")
-    //             .about("Set the value of a string key to a string")
-    //             .arg(Arg::with_name("key").help("A string key"))
-    //             .arg(Arg::with_name("value").help("The string value of the key")),
-    //     )
-    //     .subcommand(
-    //         SubCommand::with_name("rm")
-    //             .about("Remove a given key")
-    //             .arg(Arg::with_name("key").help("A string key")),
-    //     )
-    //     .get_matches();
-    // match matches.subcommand() {
-    //     ("set", Some(_matches)) => {
-    //         eprintln!("unimplemented");
-    //         exit(1);
-    //     }
-    //     ("get", Some(_matches)) => {
-    //         eprintln!("unimplemented");
-    //         exit(1);
-    //     }
-    //     ("rm", Some(_matches)) => {
-    //         eprintln!("unimplemented");
-    //         exit(1);
-    //     }
-    //     _ => unreachable!(),
-    // }
+    };
+    Ok(())
 }
