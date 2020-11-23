@@ -12,11 +12,11 @@ impl KvSled {
     /// open
     pub fn open(path: impl Into<PathBuf>) -> Result<impl KvsEngine> {
         let db: sled::Db = sled::open(path.into()).unwrap();
-        if db.was_recovered() {
-            println!("Recovered from previous!");
-        } else {
-            println!("Create new data store!");
-        }
+        // if db.was_recovered() {
+        //     println!("Recovered from previous!");
+        // } else {
+        //     println!("Create new data store!");
+        // }
         Ok(KvSled { db })
     }
 }
