@@ -15,6 +15,9 @@ pub enum KvError {
     #[error("{0}")]
     Serde(#[from] serde_json::Error),
     /// Unknown Error
+    #[error("Parser Error with {0}")]
+    ParserError(String),
+    /// Unknown Error
     #[error("unknown data store error")]
     Unknown,
 }

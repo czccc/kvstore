@@ -1,4 +1,4 @@
-use crate::{KvError, Result};
+use crate::{KvError, KvsEngine, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
 use std::{
@@ -18,18 +18,6 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 const COMPACTION_THRESHOLD: u64 = 1024 * 1024;
 
 /// KvStore is a struct that store Key Value pairs
-/// /// Example:
-/// ```rust
-/// # use kvs::{KvStore, Result};
-/// # fn try_main() -> Result<()> {
-/// use std::env::current_dir;
-/// let mut store = KvStore::open(current_dir()?)?;
-/// store.set("key".to_owned(), "value".to_owned())?;
-/// let val = store.get("key".to_owned())?;
-/// assert_eq!(val, Some("value".to_owned()));
-/// # Ok(())
-/// # }
-/// ```
 #[derive(Debug)]
 pub struct KvStore {
     current_gen: u64,
@@ -42,7 +30,7 @@ pub struct KvStore {
 
 impl KvStore {
     /// Open the KvStore at a given path. Return the KvStore.
-    pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
+    pub fn open(path: impl Into<PathBuf>) -> Result<impl KvsEngine> {
         let path = path.into();
         fs::create_dir_all(&path)?;
 
@@ -77,73 +65,6 @@ impl KvStore {
             index,
             uncompacted,
         })
-    }
-
-    /// Given a `String` key, return the `String` value of the key.
-    ///
-    /// Return None if the key is not in KvStore
-    /// Return an error if the value is not read successfully.
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        if let Some(cmd_pos) = self.index.get(&key) {
-            let reader = self
-                .readers
-                .get_mut(&cmd_pos.gen)
-                .expect("Cannot find log reader");
-            reader.seek(SeekFrom::Start(cmd_pos.pos))?;
-            let cmd_reader = reader.take(cmd_pos.len);
-            if let Command::Set { value, .. } = serde_json::from_reader(cmd_reader)? {
-                Ok(Some(value))
-            } else {
-                Err(KvError::Unknown)
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Given a `String` key and a `String` value, store the `String` value in the KvStore.
-    /// if key already in KvStore, override it.
-    ///
-    /// Return None if the key was not in the KvStore.
-    /// Return the previously value at the key if the key was previously in the KvStore.
-    /// Return an error if the value is not written successfully.
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let cmd = Command::Set { key, value };
-        let pos = self.writer.pos;
-        serde_json::to_writer(&mut self.writer, &cmd)?;
-        self.writer.flush()?;
-        if let Command::Set { key, .. } = cmd {
-            if let Some(old_cmd) = self
-                .index
-                .insert(key, (self.current_gen, pos..self.writer.pos).into())
-            {
-                self.uncompacted += old_cmd.len;
-            }
-        }
-
-        if self.uncompacted > COMPACTION_THRESHOLD {
-            self.compact()?;
-        }
-        Ok(())
-    }
-
-    /// Given a `String` key , remove the `String` key in the KvStore.
-    ///
-    /// Return the value at the key if the key was previously in the KvStore.
-    /// Reruen None if the key was not in the KvStore.
-    pub fn remove(&mut self, key: String) -> Result<()> {
-        if self.index.contains_key(&key) {
-            let cmd = Command::Remove { key };
-            serde_json::to_writer(&mut self.writer, &cmd)?;
-            self.writer.flush()?;
-            if let Command::Remove { key } = cmd {
-                let old_cmd = self.index.remove(&key).expect("key not found");
-                self.uncompacted += old_cmd.len;
-            }
-            Ok(())
-        } else {
-            Err(KvError::KeyNotFound)
-        }
     }
 
     /// Clears stale entries in the log.
@@ -198,6 +119,75 @@ impl KvStore {
         self.uncompacted = 0;
 
         Ok(())
+    }
+}
+
+impl KvsEngine for KvStore {
+    /// Given a `String` key, return the `String` value of the key.
+    ///
+    /// Return None if the key is not in KvStore
+    /// Return an error if the value is not read successfully.
+    fn get(&mut self, key: String) -> Result<Option<String>> {
+        if let Some(cmd_pos) = self.index.get(&key) {
+            let reader = self
+                .readers
+                .get_mut(&cmd_pos.gen)
+                .expect("Cannot find log reader");
+            reader.seek(SeekFrom::Start(cmd_pos.pos))?;
+            let cmd_reader = reader.take(cmd_pos.len);
+            if let Command::Set { value, .. } = serde_json::from_reader(cmd_reader)? {
+                Ok(Some(value))
+            } else {
+                Err(KvError::Unknown)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Given a `String` key and a `String` value, store the `String` value in the KvStore.
+    /// if key already in KvStore, override it.
+    ///
+    /// Return None if the key was not in the KvStore.
+    /// Return the previously value at the key if the key was previously in the KvStore.
+    /// Return an error if the value is not written successfully.
+    fn set(&mut self, key: String, value: String) -> Result<()> {
+        let cmd = Command::Set { key, value };
+        let pos = self.writer.pos;
+        serde_json::to_writer(&mut self.writer, &cmd)?;
+        self.writer.flush()?;
+        if let Command::Set { key, .. } = cmd {
+            if let Some(old_cmd) = self
+                .index
+                .insert(key, (self.current_gen, pos..self.writer.pos).into())
+            {
+                self.uncompacted += old_cmd.len;
+            }
+        }
+
+        if self.uncompacted > COMPACTION_THRESHOLD {
+            self.compact()?;
+        }
+        Ok(())
+    }
+
+    /// Given a `String` key , remove the `String` key in the KvStore.
+    ///
+    /// Return the value at the key if the key was previously in the KvStore.
+    /// Reruen None if the key was not in the KvStore.
+    fn remove(&mut self, key: String) -> Result<()> {
+        if self.index.contains_key(&key) {
+            let cmd = Command::Remove { key };
+            serde_json::to_writer(&mut self.writer, &cmd)?;
+            self.writer.flush()?;
+            if let Command::Remove { key } = cmd {
+                let old_cmd = self.index.remove(&key).expect("key not found");
+                self.uncompacted += old_cmd.len;
+            }
+            Ok(())
+        } else {
+            Err(KvError::KeyNotFound)
+        }
     }
 }
 
