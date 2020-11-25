@@ -15,8 +15,6 @@ pub struct Request {
 pub struct Response {
     /// Status
     pub status: String,
-    /// Key
-    pub message: Option<String>,
-    /// Value
+    /// Result
     pub result: Option<String>,
 }

@@ -15,18 +15,12 @@ pub enum KvError {
     #[error("{0}")]
     Serde(#[from] serde_json::Error),
     /// Unknown Error
-    #[error("Parser Error with {0}")]
+    #[error("Unknown Engine: {0}")]
     ParserError(String),
     /// Unknown Error
-    #[error("unknown data store error")]
+    #[error("Unknown Error")]
     Unknown,
 }
 
 /// KvStore Error Result
 pub type Result<T> = std::result::Result<T, KvError>;
-
-// impl From<io::Error> for KvError {
-//     fn from(err: io::Error) -> Self {
-//         KvError::Io(err)
-//     }
-// }
