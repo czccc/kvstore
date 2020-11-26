@@ -33,10 +33,10 @@ struct Opt {
         default_value = "Auto",
         parse(try_from_str = parse_str_to_engine)
     )]
-    engine: Engine,
+    engine: Engine<KvStore>,
 }
 
-fn parse_str_to_engine(src: &str) -> Result<Engine> {
+fn parse_str_to_engine(src: &str) -> Result<Engine<KvStore>> {
     let previous = fs::read_to_string(ENGINE_TAG_FILE);
     if src == "Auto" {
         Ok(Engine::from_str(&previous.unwrap_or("kvs".to_string()))?)

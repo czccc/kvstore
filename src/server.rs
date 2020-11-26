@@ -20,7 +20,7 @@ impl KvsServer {
     /// Construct a new Kvs Server from given engine at specific path.
     /// Use `run()` to listen on given addr.
     pub fn new(
-        engine: Engine,
+        engine: Engine<KvStore>,
         path: impl Into<PathBuf>,
         addr: SocketAddr,
         logger: slog::Logger,
@@ -128,7 +128,7 @@ impl KvsServer {
     }
 }
 
-fn write_engine_to_dir(engine: &Engine) -> Result<()> {
+fn write_engine_to_dir(engine: &Engine<KvStore>) -> Result<()> {
     let mut engine_tag_file = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -136,6 +136,7 @@ fn write_engine_to_dir(engine: &Engine) -> Result<()> {
     match engine {
         Engine::kvs => engine_tag_file.write(b"kvs")?,
         Engine::sled => engine_tag_file.write(b"sled")?,
+        Engine::Dependent(_) => 0,
     };
     engine_tag_file.flush()?;
     Ok(())

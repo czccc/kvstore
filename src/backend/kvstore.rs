@@ -1,4 +1,4 @@
-use crate::{KvError, KvsEngine, Result};
+use crate::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
 use std::{
@@ -28,9 +28,18 @@ pub struct KvStore {
     uncompacted: u64,
 }
 
+impl Clone for KvStore {
+    fn clone(&self) -> Self
+    where
+        Self: Sized,
+    {
+        todo!()
+    }
+}
+
 impl KvStore {
     /// Open the KvStore at a given path. Return the KvStore.
-    pub fn open(path: impl Into<PathBuf>) -> Result<impl KvsEngine> {
+    pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
         let path = path.into();
         fs::create_dir_all(&path)?;
 
@@ -121,6 +130,8 @@ impl KvStore {
         Ok(())
     }
 }
+
+impl KvsBackend for KvStore {}
 
 impl KvsEngine for KvStore {
     fn get(&mut self, key: String) -> Result<Option<String>> {

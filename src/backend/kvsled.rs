@@ -1,20 +1,22 @@
 use std::{path::PathBuf, str::from_utf8};
 
-use crate::{KvError, KvsEngine, Result};
+use crate::*;
 
 /// Key-Value Store, implement in sled
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KvSled {
     db: sled::Db,
 }
 
 impl KvSled {
     /// Open KvSled at given path
-    pub fn open(path: impl Into<PathBuf>) -> Result<impl KvsEngine> {
+    pub fn open(path: impl Into<PathBuf>) -> Result<KvSled> {
         let db: sled::Db = sled::open(path.into()).unwrap();
         Ok(KvSled { db })
     }
 }
+
+impl KvsBackend for KvSled {}
 
 impl KvsEngine for KvSled {
     fn set(&mut self, key: String, value: String) -> Result<()> {

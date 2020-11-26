@@ -8,6 +8,9 @@ mod kvsled;
 mod kvstore;
 
 /// The KvsEngine trait supports the following methods:
+pub trait KvsBackend: KvsEngine + Clone + Send + 'static {}
+
+/// The KvsEngine trait supports the following methods:
 pub trait KvsEngine {
     /// Set the value of a string key to a string.
     ///
@@ -26,24 +29,27 @@ pub trait KvsEngine {
 /// Backend Engine
 #[allow(non_camel_case_types)]
 #[derive(Debug)]
-pub enum Engine {
+pub enum Engine<E: KvsEngine> {
     /// Use log-structure engine
     kvs,
     /// Use sled engine
     sled,
+    /// else
+    Dependent(E),
 }
 
-impl Engine {
+impl<E: KvsEngine> Engine<E> {
     /// Open a backend Engine in given path
     pub fn open(&self, path: impl Into<PathBuf>) -> Result<Box<dyn KvsEngine>> {
         match self {
             Engine::kvs => Ok(Box::new(KvStore::open(path.into())?)),
             Engine::sled => Ok(Box::new(KvSled::open(path.into())?)),
+            Engine::Dependent(_) => Err(KvError::Unknown),
         }
     }
 }
 
-impl FromStr for Engine {
+impl<E: KvsEngine> FromStr for Engine<E> {
     type Err = KvError;
 
     fn from_str(s: &str) -> Result<Self> {
