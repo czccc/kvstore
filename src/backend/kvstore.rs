@@ -123,10 +123,6 @@ impl KvStore {
 }
 
 impl KvsEngine for KvStore {
-    /// Given a `String` key, return the `String` value of the key.
-    ///
-    /// Return None if the key is not in KvStore
-    /// Return an error if the value is not read successfully.
     fn get(&mut self, key: String) -> Result<Option<String>> {
         if let Some(cmd_pos) = self.index.get(&key) {
             let reader = self
@@ -144,13 +140,6 @@ impl KvsEngine for KvStore {
             Ok(None)
         }
     }
-
-    /// Given a `String` key and a `String` value, store the `String` value in the KvStore.
-    /// if key already in KvStore, override it.
-    ///
-    /// Return None if the key was not in the KvStore.
-    /// Return the previously value at the key if the key was previously in the KvStore.
-    /// Return an error if the value is not written successfully.
     fn set(&mut self, key: String, value: String) -> Result<()> {
         let cmd = Command::Set { key, value };
         let pos = self.writer.pos;
@@ -170,11 +159,6 @@ impl KvsEngine for KvStore {
         }
         Ok(())
     }
-
-    /// Given a `String` key , remove the `String` key in the KvStore.
-    ///
-    /// Return the value at the key if the key was previously in the KvStore.
-    /// Reruen None if the key was not in the KvStore.
     fn remove(&mut self, key: String) -> Result<()> {
         if self.index.contains_key(&key) {
             let cmd = Command::Remove { key };

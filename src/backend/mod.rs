@@ -34,7 +34,7 @@ pub enum Engine {
 }
 
 impl Engine {
-    /// Open kvstore in given path
+    /// Open a backend Engine in given path
     pub fn open(&self, path: impl Into<PathBuf>) -> Result<Box<dyn KvsEngine>> {
         match self {
             Engine::kvs => Ok(Box::new(KvStore::open(path.into())?)),

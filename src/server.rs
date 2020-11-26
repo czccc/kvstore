@@ -17,7 +17,8 @@ pub struct KvsServer {
 }
 
 impl KvsServer {
-    /// Construct a new Kvs Server
+    /// Construct a new Kvs Server from given engine at specific path.
+    /// Use `run()` to listen on given addr.
     pub fn new(
         engine: Engine,
         path: impl Into<PathBuf>,

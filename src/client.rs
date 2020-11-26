@@ -6,18 +6,18 @@ use std::{
     str::from_utf8,
 };
 
-/// Kvs Cilent
+/// Kvs Cilent with an TCP stream
 pub struct KvsClient {
     stream: TcpStream,
 }
 
 impl KvsClient {
-    /// Return a kvs client at given addr
+    /// Return a kvs client at given SocketAddr
     pub fn new(addr: SocketAddr) -> Self {
         let stream = TcpStream::connect(addr).unwrap();
         Self { stream }
     }
-    /// Set
+    /// Send set command to server, and process the response.
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let request = Request {
             cmd: "Set".to_string(),
@@ -33,7 +33,7 @@ impl KvsClient {
             _ => Ok(()),
         }
     }
-    /// Get
+    /// Send get command to server, and process the response.
     pub fn get(&mut self, key: String) -> Result<()> {
         let request = Request {
             cmd: "Get".to_string(),
@@ -53,7 +53,7 @@ impl KvsClient {
             _ => Ok(()),
         }
     }
-    /// Remove
+    /// Send remove command to server, and process the response.
     pub fn remove(&mut self, key: String) -> Result<()> {
         let request = Request {
             cmd: "Remove".to_string(),

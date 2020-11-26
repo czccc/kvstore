@@ -14,7 +14,7 @@ pub enum KvError {
     /// Serialization or deserialization error.
     #[error("{0}")]
     Serde(#[from] serde_json::Error),
-    /// Unknown Error
+    /// Unknown Engine
     #[error("Unknown Engine: {0}")]
     ParserError(String),
     /// Unknown Error

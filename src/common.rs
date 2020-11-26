@@ -1,20 +1,20 @@
 use serde::{Deserialize, Serialize};
-/// Protocol for client-server request
+/// Request Protocol struct for client-server request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
-    /// Command
+    /// Command, which can be "get", "set", "remove".
     pub cmd: String,
-    /// Key
+    /// The specific Key in Command
     pub key: String,
-    /// Value
+    /// Value, only require when Command is "get"
     pub value: Option<String>,
 }
 
-/// Protocol for client-server response
+/// Protocol struct for client-server response
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Response {
-    /// Status
+    /// Return status, which can be "ok" or "err"
     pub status: String,
-    /// Result
+    /// Result which contains the "value" or Error Message.
     pub result: Option<String>,
 }
