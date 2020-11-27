@@ -55,7 +55,7 @@ pub fn write_bench(c: &mut Criterion) {
                     };
                     store
                 },
-                |mut store| {
+                |store| {
                     for i in 0..s.key.len() {
                         store
                             .set(s.key[i].to_owned(), s.value[i].to_owned())
@@ -76,7 +76,7 @@ pub fn get_bench(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let temp_dir = TempDir::new().unwrap();
-                    let mut store: Box<dyn KvsEngine> = match para.engine.as_ref() {
+                    let store: Box<dyn KvsEngine> = match para.engine.as_ref() {
                         "kvs" => Box::new(KvStore::open(temp_dir.into_path()).unwrap()),
                         "sled" => Box::new(KvSled::open(temp_dir.into_path()).unwrap()),
                         _ => exit(1),
@@ -88,7 +88,7 @@ pub fn get_bench(c: &mut Criterion) {
                     }
                     store
                 },
-                |mut store| {
+                |store| {
                     for i in 0..s.key.len() {
                         store.get(s.key[i].to_owned()).unwrap();
                     }
