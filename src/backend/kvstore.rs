@@ -162,6 +162,7 @@ impl KvsEngine for KvStore {
     }
     fn set(&self, key: String, value: String) -> Result<()> {
         {
+            let mut index = self.index.lock().unwrap();
             let mut writer = self.writer.lock().unwrap();
             // let mut uncompacted = self.uncompacted.lock().unwrap();
 
@@ -170,7 +171,7 @@ impl KvsEngine for KvStore {
             serde_json::to_writer(&mut writer.by_ref(), &cmd)?;
             writer.flush()?;
             if let Command::Set { key, .. } = cmd {
-                if let Some(old_cmd) = self.index.lock().unwrap().insert(
+                if let Some(old_cmd) = index.insert(
                     key,
                     (*self.current_gen.lock().unwrap(), pos..writer.pos).into(),
                 ) {
