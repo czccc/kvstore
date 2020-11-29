@@ -1,3 +1,4 @@
+use crate::thread_pool::*;
 use crate::*;
 use std::{
     fs,
@@ -10,23 +11,30 @@ use std::{
 };
 
 /// Kvs Server
-pub struct KvsServer {
-    store: Box<dyn KvsEngine>,
+pub struct KvsServer<E: KvsEngine> {
+    store: Option<E>,
     addr: SocketAddr,
     logger: slog::Logger,
 }
 
-impl KvsServer {
+impl<E: KvsEngine> KvsServer<E> {
+    fn open_engine(&mut self, engine: E) {
+        self.store = engine;
+    }
     /// Construct a new Kvs Server from given engine at specific path.
     /// Use `run()` to listen on given addr.
     pub fn new(
-        engine: Engine<KvStore>,
+        store: E,
         path: impl Into<PathBuf>,
         addr: SocketAddr,
         logger: slog::Logger,
     ) -> Result<Self> {
-        let store = engine.open(path)?;
-        write_engine_to_dir(&engine)?;
+        // let store = engine.open(path)?;
+        // match engine {
+        //     Engine::kvs => self.open_engine(KvStore::open(current_path())?),
+        //     Engine::sled => {}
+        // }
+        // write_engine_to_dir(&engine)?;
 
         info!(logger, "Key Value Store Server");
         info!(logger, "Version : {}", env!("CARGO_PKG_VERSION"));
@@ -46,12 +54,14 @@ impl KvsServer {
 
         info!(self.logger, "Listening on {}", self.addr);
 
+        let thread_pool = thread_pool::NaiveThreadPool::new(10)?;
+
         // accept connections and process them serially
         for stream in listener.incoming() {
             match stream {
-                Ok(stream) => {
-                    self.handle_request(stream)?;
-                }
+                Ok(stream) => thread_pool.spawn(|| {
+                    self.handle_request(stream).unwrap();
+                }),
                 Err(e) => println!("{}", e),
             }
         }
@@ -128,7 +138,7 @@ impl KvsServer {
     }
 }
 
-fn write_engine_to_dir(engine: &Engine<KvStore>) -> Result<()> {
+fn write_engine_to_dir(engine: &Engine) -> Result<()> {
     let mut engine_tag_file = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -136,7 +146,6 @@ fn write_engine_to_dir(engine: &Engine<KvStore>) -> Result<()> {
     match engine {
         Engine::kvs => engine_tag_file.write(b"kvs")?,
         Engine::sled => engine_tag_file.write(b"sled")?,
-        Engine::Dependent(_) => 0,
     };
     engine_tag_file.flush()?;
     Ok(())

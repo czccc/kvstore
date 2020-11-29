@@ -16,8 +16,6 @@ impl KvSled {
     }
 }
 
-impl KvsBackend for KvSled {}
-
 impl KvsEngine for KvSled {
     fn set(&self, key: String, value: String) -> Result<()> {
         match self.db.insert(key.as_bytes(), value.as_bytes()) {

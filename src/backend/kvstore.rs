@@ -139,8 +139,6 @@ impl KvStore {
     }
 }
 
-impl KvsBackend for KvStore {}
-
 impl KvsEngine for KvStore {
     fn get(&self, key: String) -> Result<Option<String>> {
         let index = self.index.lock().unwrap();
