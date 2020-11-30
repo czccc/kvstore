@@ -6,7 +6,7 @@ extern crate slog_term;
 use kvs::*;
 // use serde::{Deserialize, Serialize};
 use slog::Drain;
-use std::{env::current_dir, fs, net::SocketAddr, str::FromStr};
+use std::{env::current_dir, fs, io::Write, net::SocketAddr, str::FromStr};
 use structopt::StructOpt;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4000";
@@ -47,6 +47,19 @@ fn parse_str_to_engine(src: &str) -> Result<Engine> {
     }
 }
 
+fn write_engine_to_dir(engine: &Engine) -> Result<()> {
+    let mut engine_tag_file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(ENGINE_TAG_FILE)?;
+    match engine {
+        Engine::kvs => engine_tag_file.write(b"kvs")?,
+        Engine::sled => engine_tag_file.write(b"sled")?,
+    };
+    engine_tag_file.flush()?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     // let decorator = slog_term::TermDecorator::new().build();
     let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
@@ -55,9 +68,25 @@ fn main() -> Result<()> {
     let logger = slog::Logger::root(drain, o!());
 
     let opt: Opt = Opt::from_args();
+    write_engine_to_dir(&opt.engine)?;
 
-    let mut server = KvsServer::new(opt.engine, current_dir().unwrap(), opt.addr, logger)?;
-    server.run()?;
+    info!(logger, "Key Value Store Server");
+    info!(logger, "Version : {}", env!("CARGO_PKG_VERSION"));
+    info!(logger, "IP-PORT : {}", opt.addr);
+    info!(logger, "Engine  : {:?}", opt.engine);
+
+    match opt.engine {
+        Engine::kvs => {
+            let mut server =
+                KvsServer::new(KvStore::open(current_dir().unwrap())?, opt.addr, logger)?;
+            server.run()?;
+        }
+        Engine::sled => {
+            let mut server =
+                KvsServer::new(KvSled::open(current_dir().unwrap())?, opt.addr, logger)?;
+            server.run()?;
+        }
+    }
 
     Ok(())
 }

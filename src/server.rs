@@ -1,47 +1,26 @@
+use slog::Logger;
+
 use crate::thread_pool::*;
 use crate::*;
 use std::{
-    fs,
     io::Write,
     io::{prelude::*, BufReader, BufWriter},
     net::SocketAddr,
     net::{TcpListener, TcpStream},
-    path::PathBuf,
     str::from_utf8,
 };
 
 /// Kvs Server
 pub struct KvsServer<E: KvsEngine> {
-    store: Option<E>,
+    store: E,
     addr: SocketAddr,
     logger: slog::Logger,
 }
 
 impl<E: KvsEngine> KvsServer<E> {
-    fn open_engine(&mut self, engine: E) {
-        self.store = engine;
-    }
     /// Construct a new Kvs Server from given engine at specific path.
     /// Use `run()` to listen on given addr.
-    pub fn new(
-        store: E,
-        path: impl Into<PathBuf>,
-        addr: SocketAddr,
-        logger: slog::Logger,
-    ) -> Result<Self> {
-        // let store = engine.open(path)?;
-        // match engine {
-        //     Engine::kvs => self.open_engine(KvStore::open(current_path())?),
-        //     Engine::sled => {}
-        // }
-        // write_engine_to_dir(&engine)?;
-
-        info!(logger, "Key Value Store Server");
-        info!(logger, "Version : {}", env!("CARGO_PKG_VERSION"));
-        info!(logger, "IP-PORT : {}", addr);
-        info!(logger, "Engine  : {:?}", engine);
-        // info!(logger, "FileDir : {:?}", path.into());
-
+    pub fn new(store: E, addr: SocketAddr, logger: slog::Logger) -> Result<Self> {
         Ok(KvsServer {
             store,
             addr,
@@ -59,94 +38,85 @@ impl<E: KvsEngine> KvsServer<E> {
         // accept connections and process them serially
         for stream in listener.incoming() {
             match stream {
-                Ok(stream) => thread_pool.spawn(|| {
-                    self.handle_request(stream).unwrap();
-                }),
+                Ok(stream) => {
+                    let store = self.store.clone();
+                    let logger = self.logger.clone();
+                    thread_pool.spawn(move || {
+                        handle_request(store, stream, logger).unwrap();
+                    })
+                }
                 Err(e) => println!("{}", e),
             }
         }
         Ok(())
     }
-
-    fn handle_request(&mut self, stream: TcpStream) -> Result<()> {
-        let mut reader = BufReader::new(&stream);
-        let mut writer = BufWriter::new(&stream);
-
-        let mut buf = vec![];
-        let _len = reader.read_until(b'}', &mut buf)?;
-        let request_str = from_utf8(&buf).unwrap();
-
-        let request: Request = serde_json::from_str(request_str)?;
-        let response = self.process_request(request);
-
-        let response_str = serde_json::to_string(&response)?;
-        writer.write(&response_str.as_bytes())?;
-        writer.flush()?;
-
-        info!(
-            self.logger,
-            "Received request from {} - Args: {}, Response: {}",
-            stream.local_addr()?,
-            request_str,
-            response_str
-        );
-
-        Ok(())
-    }
-
-    fn process_request(&mut self, req: Request) -> Response {
-        match req.cmd.as_str() {
-            "Get" => match self.store.get(req.key) {
-                Ok(Some(value)) => Response {
-                    status: "ok".to_string(),
-                    result: Some(value),
-                },
-                Ok(None) => Response {
-                    status: "ok".to_string(),
-                    result: Some("Key not found".to_string()),
-                },
-                Err(_) => Response {
-                    status: "err".to_string(),
-                    result: Some("Something Wrong!".to_string()),
-                },
-            },
-            "Set" => match self.store.set(req.key, req.value.unwrap()) {
-                Ok(_) => Response {
-                    status: "ok".to_string(),
-                    result: None,
-                },
-                Err(_) => Response {
-                    status: "err".to_string(),
-                    result: Some("Set Error!".to_string()),
-                },
-            },
-            "Remove" => match self.store.remove(req.key) {
-                Ok(_) => Response {
-                    status: "ok".to_string(),
-                    result: None,
-                },
-                Err(_) => Response {
-                    status: "err".to_string(),
-                    result: Some("Key not found".to_string()),
-                },
-            },
-            _ => Response {
-                status: "err".to_string(),
-                result: Some("Unknown Command!".to_string()),
-            },
-        }
-    }
 }
 
-fn write_engine_to_dir(engine: &Engine) -> Result<()> {
-    let mut engine_tag_file = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .open(ENGINE_TAG_FILE)?;
-    match engine {
-        Engine::kvs => engine_tag_file.write(b"kvs")?,
-        Engine::sled => engine_tag_file.write(b"sled")?,
-    };
-    engine_tag_file.flush()?;
+fn handle_request<E: KvsEngine>(store: E, stream: TcpStream, logger: Logger) -> Result<()> {
+    let mut reader = BufReader::new(&stream);
+    let mut writer = BufWriter::new(&stream);
+
+    let mut buf = vec![];
+    let _len = reader.read_until(b'}', &mut buf)?;
+    let request_str = from_utf8(&buf).unwrap();
+
+    let request: Request = serde_json::from_str(request_str)?;
+    let response = process_request(store, request);
+
+    let response_str = serde_json::to_string(&response)?;
+    writer.write(&response_str.as_bytes())?;
+    writer.flush()?;
+
+    info!(
+        logger,
+        "Received request from {} - Args: {}, Response: {}",
+        stream.local_addr()?,
+        request_str,
+        response_str
+    );
+
     Ok(())
+}
+
+fn process_request<E: KvsEngine>(store: E, req: Request) -> Response {
+    match req.cmd.as_str() {
+        "Get" => match store.get(req.key) {
+            Ok(Some(value)) => Response {
+                status: "ok".to_string(),
+                result: Some(value),
+            },
+            Ok(None) => Response {
+                status: "ok".to_string(),
+                result: Some("Key not found".to_string()),
+            },
+            Err(_) => Response {
+                status: "err".to_string(),
+                result: Some("Something Wrong!".to_string()),
+            },
+        },
+        "Set" => match store.set(req.key, req.value.unwrap()) {
+            Ok(_) => Response {
+                status: "ok".to_string(),
+                result: None,
+            },
+            Err(_) => Response {
+                status: "err".to_string(),
+                result: Some("Set Error!".to_string()),
+            },
+        },
+        "Remove" => match store.remove(req.key) {
+            Ok(_) => Response {
+                status: "ok".to_string(),
+                result: None,
+            },
+            Err(_) => Response {
+                status: "err".to_string(),
+                result: Some("Key not found".to_string()),
+            },
+        },
+        _ => Response {
+            status: "err".to_string(),
+            result: Some("Unknown Command!".to_string()),
+        },
+    }
 }
