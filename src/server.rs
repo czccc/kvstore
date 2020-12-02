@@ -11,29 +11,27 @@ use std::{
 };
 
 /// Kvs Server
-pub struct KvsServer<E: KvsEngine> {
+pub struct KvsServer<E: KvsEngine, P: ThreadPool> {
     store: E,
-    addr: SocketAddr,
+    thread_pool: P,
     logger: slog::Logger,
 }
 
-impl<E: KvsEngine> KvsServer<E> {
+impl<E: KvsEngine, P: ThreadPool> KvsServer<E, P> {
     /// Construct a new Kvs Server from given engine at specific path.
     /// Use `run()` to listen on given addr.
-    pub fn new(store: E, addr: SocketAddr, logger: slog::Logger) -> Result<Self> {
+    pub fn new(store: E, thread_pool: P, logger: slog::Logger) -> Result<Self> {
         Ok(KvsServer {
             store,
-            addr,
+            thread_pool,
             logger,
         })
     }
     /// Run Kvs Server at given Addr
-    pub fn run(&mut self) -> Result<()> {
-        let listener = TcpListener::bind(self.addr)?;
+    pub fn run(&mut self, addr: SocketAddr) -> Result<()> {
+        let listener = TcpListener::bind(addr)?;
 
-        info!(self.logger, "Listening on {}", self.addr);
-
-        let thread_pool = thread_pool::NaiveThreadPool::new(10)?;
+        info!(self.logger, "Listening on {}", addr);
 
         // accept connections and process them serially
         for stream in listener.incoming() {
@@ -41,7 +39,7 @@ impl<E: KvsEngine> KvsServer<E> {
                 Ok(stream) => {
                     let store = self.store.clone();
                     let logger = self.logger.clone();
-                    thread_pool.spawn(move || {
+                    self.thread_pool.spawn(move || {
                         handle_request(store, stream, logger).unwrap();
                     })
                 }

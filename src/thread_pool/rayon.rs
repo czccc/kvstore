@@ -1,20 +1,27 @@
 use crate::thread_pool::ThreadPool;
 
 /// RayonThreadPool
-pub struct RayonThreadPool {}
+pub struct RayonThreadPool {
+    rayon: rayon::ThreadPool,
+}
 
 impl ThreadPool for RayonThreadPool {
-    fn new(_threads: u32) -> crate::Result<Self>
+    fn new(threads: u32) -> crate::Result<Self>
     where
         Self: Sized,
     {
-        unimplemented!()
+        Ok(Self {
+            rayon: rayon::ThreadPoolBuilder::new()
+                .num_threads(threads as usize)
+                .build()
+                .unwrap(),
+        })
     }
 
-    fn spawn<F>(&self, _job: F)
+    fn spawn<F>(&self, job: F)
     where
         F: FnOnce() + Send + 'static,
     {
-        unimplemented!()
+        self.rayon.spawn(job);
     }
 }

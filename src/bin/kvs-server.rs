@@ -3,6 +3,7 @@ extern crate slog;
 extern crate slog_async;
 extern crate slog_term;
 
+use kvs::thread_pool::*;
 use kvs::*;
 // use serde::{Deserialize, Serialize};
 use slog::Drain;
@@ -75,16 +76,19 @@ fn main() -> Result<()> {
     info!(logger, "IP-PORT : {}", opt.addr);
     info!(logger, "Engine  : {:?}", opt.engine);
 
+    let cpus = num_cpus::get();
+    let thread_pool = SharedQueueThreadPool::new(cpus as u32)?;
+
     match opt.engine {
         Engine::kvs => {
             let mut server =
-                KvsServer::new(KvStore::open(current_dir().unwrap())?, opt.addr, logger)?;
-            server.run()?;
+                KvsServer::new(KvStore::open(current_dir().unwrap())?, thread_pool, logger)?;
+            server.run(opt.addr)?;
         }
         Engine::sled => {
             let mut server =
-                KvsServer::new(KvSled::open(current_dir().unwrap())?, opt.addr, logger)?;
-            server.run()?;
+                KvsServer::new(KvSled::open(current_dir().unwrap())?, thread_pool, logger)?;
+            server.run(opt.addr)?;
         }
     }
 
