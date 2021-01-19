@@ -41,103 +41,91 @@ fn random_string_with_length(rng: &mut StdRng, len: usize) -> Vec<String> {
 }
 
 pub fn engine_write_bench(c: &mut Criterion) {
+    let mut group = c.benchmark_group("engine_write");
     let para = Para::new("kvs".to_string(), 100);
-    c.bench_with_input(
-        BenchmarkId::new("engine_write_bench", &para),
-        &para,
-        |b, s| {
-            b.iter_batched(
-                || {
-                    let temp_dir = TempDir::new().unwrap();
-                    let store = KvStore::open(temp_dir.into_path()).unwrap();
+    group.bench_with_input(BenchmarkId::new("kvs", &para), &para, |b, s| {
+        b.iter_batched(
+            || {
+                let temp_dir = TempDir::new().unwrap();
+                let store = KvStore::open(temp_dir.into_path()).unwrap();
+                store
+            },
+            |store| {
+                for i in 0..s.key.len() {
                     store
-                },
-                |store| {
-                    for i in 0..s.key.len() {
-                        store
-                            .set(s.key[i].to_owned(), s.value[i].to_owned())
-                            .unwrap();
-                    }
-                },
-                BatchSize::SmallInput,
-            );
-        },
-    );
+                        .set(s.key[i].to_owned(), s.value[i].to_owned())
+                        .unwrap();
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
     let para = Para::new("sled".to_string(), 100);
-    c.bench_with_input(
-        BenchmarkId::new("engine_write_bench", &para),
-        &para,
-        |b, s| {
-            b.iter_batched(
-                || {
-                    let temp_dir = TempDir::new().unwrap();
-                    let store = KvSled::open(temp_dir.into_path()).unwrap();
+    group.bench_with_input(BenchmarkId::new("sled", &para), &para, |b, s| {
+        b.iter_batched(
+            || {
+                let temp_dir = TempDir::new().unwrap();
+                let store = KvSled::open(temp_dir.into_path()).unwrap();
+                store
+            },
+            |store| {
+                for i in 0..s.key.len() {
                     store
-                },
-                |store| {
-                    for i in 0..s.key.len() {
-                        store
-                            .set(s.key[i].to_owned(), s.value[i].to_owned())
-                            .unwrap();
-                    }
-                },
-                BatchSize::SmallInput,
-            );
-        },
-    );
+                        .set(s.key[i].to_owned(), s.value[i].to_owned())
+                        .unwrap();
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
 }
 
 pub fn engine_get_bench(c: &mut Criterion) {
+    let mut group = c.benchmark_group("engine_get");
     let para = Para::new("kvs".to_string(), 1000);
-    c.bench_with_input(
-        BenchmarkId::new("engine_get_bench", &para),
-        &para,
-        |b, s| {
-            b.iter_batched(
-                || {
-                    let temp_dir = TempDir::new().unwrap();
-                    let store = KvStore::open(temp_dir.into_path()).unwrap();
-                    for i in 0..s.key.len() {
-                        store
-                            .set(s.key[i].to_owned(), s.value[i].to_owned())
-                            .unwrap();
-                    }
+    group.bench_with_input(BenchmarkId::new("kvs", &para), &para, |b, s| {
+        b.iter_batched(
+            || {
+                let temp_dir = TempDir::new().unwrap();
+                let store = KvStore::open(temp_dir.into_path()).unwrap();
+                for i in 0..s.key.len() {
                     store
-                },
-                |store| {
-                    for i in 0..s.key.len() {
-                        store.get(s.key[i].to_owned()).unwrap();
-                    }
-                },
-                BatchSize::SmallInput,
-            );
-        },
-    );
+                        .set(s.key[i].to_owned(), s.value[i].to_owned())
+                        .unwrap();
+                }
+                store
+            },
+            |store| {
+                for i in 0..s.key.len() {
+                    store.get(s.key[i].to_owned()).unwrap();
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
     let para = Para::new("sled".to_string(), 1000);
-    c.bench_with_input(
-        BenchmarkId::new("engine_get_bench", &para),
-        &para,
-        |b, s| {
-            b.iter_batched(
-                || {
-                    let temp_dir = TempDir::new().unwrap();
-                    let store = KvSled::open(temp_dir.into_path()).unwrap();
-                    for i in 0..s.key.len() {
-                        store
-                            .set(s.key[i].to_owned(), s.value[i].to_owned())
-                            .unwrap();
-                    }
+    group.bench_with_input(BenchmarkId::new("sled", &para), &para, |b, s| {
+        b.iter_batched(
+            || {
+                let temp_dir = TempDir::new().unwrap();
+                let store = KvSled::open(temp_dir.into_path()).unwrap();
+                for i in 0..s.key.len() {
                     store
-                },
-                |store| {
-                    for i in 0..s.key.len() {
-                        store.get(s.key[i].to_owned()).unwrap();
-                    }
-                },
-                BatchSize::SmallInput,
-            );
-        },
-    );
+                        .set(s.key[i].to_owned(), s.value[i].to_owned())
+                        .unwrap();
+                }
+                store
+            },
+            |store| {
+                for i in 0..s.key.len() {
+                    store.get(s.key[i].to_owned()).unwrap();
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
 }
 
 criterion_group!(benches, engine_write_bench, engine_get_bench);
