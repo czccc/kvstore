@@ -17,6 +17,9 @@ pub enum KvError {
     /// Unknown Engine
     #[error("Unknown Engine: {0}")]
     ParserError(String),
+    /// Unknown Engine
+    #[error("{0}")]
+    StringError(String),
     /// Unknown Error
     #[error("Unknown Error")]
     Unknown,

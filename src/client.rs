@@ -2,7 +2,6 @@ use crate::*;
 use std::{
     io::{BufRead, BufReader, BufWriter, Write},
     net::{SocketAddr, TcpStream},
-    process::exit,
     str::from_utf8,
 };
 
@@ -26,15 +25,15 @@ impl KvsClient {
         };
         let response = self.send_request(request)?;
         match response.status.as_str() {
-            "err" => {
-                eprintln!("{}", response.result.unwrap());
-                exit(1);
-            }
-            _ => Ok(()),
+            "ok" => Ok(()),
+            "err" => Err(KvError::StringError(
+                response.result.unwrap_or("Unknown Error".to_owned()),
+            )),
+            _ => Err(KvError::StringError("Unknown Status".to_owned())),
         }
     }
     /// Send get command to server, and process the response.
-    pub fn get(&mut self, key: String) -> Result<()> {
+    pub fn get(&mut self, key: String) -> Result<String> {
         let request = Request {
             cmd: "Get".to_string(),
             key,
@@ -42,15 +41,11 @@ impl KvsClient {
         };
         let response = self.send_request(request)?;
         match response.status.as_str() {
-            "ok" => {
-                println!("{}", response.result.unwrap());
-                Ok(())
-            }
-            "err" => {
-                eprintln!("{}", response.result.unwrap());
-                exit(1);
-            }
-            _ => Ok(()),
+            "ok" => Ok(response.result.unwrap()),
+            "err" => Err(KvError::StringError(
+                response.result.unwrap_or("Unknown Error".to_owned()),
+            )),
+            _ => Err(KvError::StringError("Unknown Status".to_owned())),
         }
     }
     /// Send remove command to server, and process the response.
@@ -62,11 +57,11 @@ impl KvsClient {
         };
         let response = self.send_request(request)?;
         match response.status.as_str() {
-            "err" => {
-                eprintln!("{}", response.result.unwrap());
-                exit(1);
-            }
-            _ => Ok(()),
+            "ok" => Ok(()),
+            "err" => Err(KvError::StringError(
+                response.result.unwrap_or("Unknown Error".to_owned()),
+            )),
+            _ => Err(KvError::StringError("Unknown Status".to_owned())),
         }
     }
     fn send_request(&mut self, request: Request) -> Result<Response> {

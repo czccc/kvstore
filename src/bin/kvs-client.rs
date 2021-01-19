@@ -1,6 +1,6 @@
 use kvs::{KvsClient, Result};
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::{net::SocketAddr, process::exit};
 use structopt::StructOpt;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4000";
@@ -64,15 +64,27 @@ fn main() -> Result<()> {
     match opt.cmd {
         Command::Get { key, addr } => {
             let mut client = KvsClient::new(addr);
-            client.get(key)?;
+            match client.get(key) {
+                Ok(result) => println!("{}", result),
+                Err(e) => {
+                    eprintln!("{}", e);
+                    exit(1);
+                }
+            }
         }
         Command::Set { key, value, addr } => {
             let mut client = KvsClient::new(addr);
-            client.set(key, value)?;
+            if let Err(e) = client.set(key, value) {
+                eprintln!("{}", e);
+                exit(1);
+            }
         }
         Command::Rm { key, addr } => {
             let mut client = KvsClient::new(addr);
-            client.remove(key)?;
+            if let Err(e) = client.remove(key) {
+                eprintln!("{}", e);
+                exit(1);
+            }
         }
     };
     Ok(())
