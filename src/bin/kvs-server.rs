@@ -1,12 +1,9 @@
 #[macro_use]
-extern crate slog;
-extern crate slog_async;
-extern crate slog_term;
+extern crate log;
 
 use kvs::thread_pool::*;
 use kvs::*;
 // use serde::{Deserialize, Serialize};
-use slog::Drain;
 use std::{env::current_dir, fs, io::Write, net::SocketAddr, str::FromStr};
 use structopt::StructOpt;
 
@@ -62,32 +59,26 @@ fn write_engine_to_dir(engine: &Engine) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    // let decorator = slog_term::TermDecorator::new().build();
-    let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
-    let logger = slog::Logger::root(drain, o!());
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let opt: Opt = Opt::from_args();
     write_engine_to_dir(&opt.engine)?;
 
-    info!(logger, "Key Value Store Server");
-    info!(logger, "Version : {}", env!("CARGO_PKG_VERSION"));
-    info!(logger, "IP-PORT : {}", opt.addr);
-    info!(logger, "Engine  : {:?}", opt.engine);
+    info!("Key Value Store Server");
+    info!("  Version : {}", env!("CARGO_PKG_VERSION"));
+    info!("  IP-PORT : {}", opt.addr);
+    info!("  Engine  : {:?}", opt.engine);
 
     let cpus = num_cpus::get();
     let thread_pool = SharedQueueThreadPool::new(cpus as u32)?;
 
     match opt.engine {
         Engine::kvs => {
-            let mut server =
-                KvsServer::new(KvStore::open(current_dir().unwrap())?, thread_pool, logger)?;
+            let mut server = KvsServer::new(KvStore::open(current_dir().unwrap())?, thread_pool)?;
             server.run(opt.addr)?;
         }
         Engine::sled => {
-            let mut server =
-                KvsServer::new(KvSled::open(current_dir().unwrap())?, thread_pool, logger)?;
+            let mut server = KvsServer::new(KvSled::open(current_dir().unwrap())?, thread_pool)?;
             server.run(opt.addr)?;
         }
     }

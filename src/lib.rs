@@ -2,9 +2,7 @@
 //! A key-value store system
 
 #[macro_use]
-extern crate slog;
-extern crate slog_async;
-extern crate slog_term;
+extern crate log;
 
 mod backend;
 mod client;

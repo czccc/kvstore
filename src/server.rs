@@ -1,5 +1,3 @@
-use slog::Logger;
-
 use crate::thread_pool::*;
 use crate::*;
 use std::{
@@ -14,33 +12,27 @@ use std::{
 pub struct KvsServer<E: KvsEngine, P: ThreadPool> {
     store: E,
     thread_pool: P,
-    logger: slog::Logger,
 }
 
 impl<E: KvsEngine, P: ThreadPool> KvsServer<E, P> {
     /// Construct a new Kvs Server from given engine at specific path.
     /// Use `run()` to listen on given addr.
-    pub fn new(store: E, thread_pool: P, logger: slog::Logger) -> Result<Self> {
-        Ok(KvsServer {
-            store,
-            thread_pool,
-            logger,
-        })
+    pub fn new(store: E, thread_pool: P) -> Result<Self> {
+        Ok(KvsServer { store, thread_pool })
     }
     /// Run Kvs Server at given Addr
     pub fn run(&mut self, addr: SocketAddr) -> Result<()> {
         let listener = TcpListener::bind(addr)?;
 
-        info!(self.logger, "Listening on {}", addr);
+        info!("[Server] Listening on {}", addr);
 
         // accept connections and process them serially
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
                     let store = self.store.clone();
-                    let logger = self.logger.clone();
                     self.thread_pool.spawn(move || {
-                        handle_request(store, stream, logger).unwrap();
+                        handle_request(store, stream).unwrap();
                     })
                 }
                 Err(e) => println!("{}", e),
@@ -50,7 +42,7 @@ impl<E: KvsEngine, P: ThreadPool> KvsServer<E, P> {
     }
 }
 
-fn handle_request<E: KvsEngine>(store: E, stream: TcpStream, logger: Logger) -> Result<()> {
+fn handle_request<E: KvsEngine>(store: E, stream: TcpStream) -> Result<()> {
     let mut reader = BufReader::new(&stream);
     let mut writer = BufWriter::new(&stream);
 
@@ -66,8 +58,7 @@ fn handle_request<E: KvsEngine>(store: E, stream: TcpStream, logger: Logger) -> 
     writer.flush()?;
 
     info!(
-        logger,
-        "Received request from {} - Args: {}, Response: {}",
+        "[Server] Received request from {} - Args: {}, Response: {}",
         stream.local_addr()?,
         request_str,
         response_str
