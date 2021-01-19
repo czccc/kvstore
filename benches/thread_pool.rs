@@ -49,105 +49,112 @@ fn random_string_with_length(rng: &mut StdRng, len: usize) -> Vec<String> {
     ret
 }
 
-fn write_bench(c: &mut Criterion) {
+fn thread_pool_write_bench(c: &mut Criterion) {
     vec!["naive", "share", "rayon"]
         .iter()
         .map(|pool| {
             let para = Para::new("kvs".to_string(), pool.to_string(), 100);
-            c.bench_with_input(BenchmarkId::new("write_bench", &para), &para, |b, s| {
-                b.iter_custom(|_iters| {
-                    let (sender, receiver) = mpsc::sync_channel(0);
-                    let temp_dir = TempDir::new().unwrap();
-                    let mut server = Command::cargo_bin("kvs-server").unwrap();
-                    let mut child = server
-                        .args(&[
-                            "--engine",
-                            &para.engine,
-                            "--threadpool",
-                            &para.pool,
-                            "--addr",
-                            "127.0.0.1:5000",
-                        ])
-                        .env("RUST_LOG", "warn")
-                        .current_dir(&temp_dir)
-                        .spawn()
-                        .unwrap();
-                    let handle = thread::spawn(move || {
-                        let _ = receiver.recv(); // wait for main thread to finish
-                        child.kill().expect("server exited before killed");
+            c.bench_with_input(
+                BenchmarkId::new("thread_pool_write_bench", &para),
+                &para,
+                |b, s| {
+                    b.iter_custom(|_iters| {
+                        let (sender, receiver) = mpsc::sync_channel(0);
+                        let temp_dir = TempDir::new().unwrap();
+                        let mut server = Command::cargo_bin("kvs-server").unwrap();
+                        let mut child = server
+                            .args(&[
+                                "--engine",
+                                &para.engine,
+                                "--threadpool",
+                                &para.pool,
+                                "--addr",
+                                "127.0.0.1:5000",
+                            ])
+                            .env("RUST_LOG", "warn")
+                            .current_dir(&temp_dir)
+                            .spawn()
+                            .unwrap();
+                        let handle = thread::spawn(move || {
+                            let _ = receiver.recv(); // wait for main thread to finish
+                            child.kill().expect("server exited before killed");
+                        });
+                        thread::sleep(Duration::from_secs(1));
+
+                        let start = Instant::now();
+                        for i in 0..s.key.len() {
+                            let mut client = KvsClient::new("127.0.0.1:5000".parse().unwrap());
+                            client
+                                .set(s.key[i].to_owned(), s.value[i].to_owned())
+                                .expect("Unable set");
+                        }
+                        let ret = start.elapsed();
+
+                        sender.send(()).unwrap();
+                        handle.join().unwrap();
+                        ret
                     });
-                    thread::sleep(Duration::from_secs(1));
-
-                    let start = Instant::now();
-                    for i in 0..s.key.len() {
-                        let mut client = KvsClient::new("127.0.0.1:5000".parse().unwrap());
-                        client
-                            .set(s.key[i].to_owned(), s.value[i].to_owned())
-                            .expect("Unable set");
-                    }
-                    let ret = start.elapsed();
-
-                    sender.send(()).unwrap();
-                    handle.join().unwrap();
-                    ret
-                });
-            });
+                },
+            );
         })
         .for_each(|_| {});
 }
 
-fn get_bench(c: &mut Criterion) {
+fn thread_pool_get_bench(c: &mut Criterion) {
     vec!["naive", "share", "rayon"]
         .iter()
         .map(|pool| {
             let para = Para::new("kvs".to_string(), pool.to_string(), 100);
-            c.bench_with_input(BenchmarkId::new("write_bench", &para), &para, |b, s| {
-                b.iter_custom(|_iters| {
-                    let (sender, receiver) = mpsc::sync_channel(0);
-                    let temp_dir = TempDir::new().unwrap();
-                    let mut server = Command::cargo_bin("kvs-server").unwrap();
-                    let mut child = server
-                        .args(&[
-                            "--engine",
-                            &para.engine,
-                            "--threadpool",
-                            &para.pool,
-                            "--addr",
-                            "127.0.0.1:5000",
-                        ])
-                        .env("RUST_LOG", "warn")
-                        .current_dir(&temp_dir)
-                        .spawn()
-                        .unwrap();
-                    let handle = thread::spawn(move || {
-                        let _ = receiver.recv(); // wait for main thread to finish
-                        child.kill().expect("server exited before killed");
+            c.bench_with_input(
+                BenchmarkId::new("thread_pool_get_bench", &para),
+                &para,
+                |b, s| {
+                    b.iter_custom(|_iters| {
+                        let (sender, receiver) = mpsc::sync_channel(0);
+                        let temp_dir = TempDir::new().unwrap();
+                        let mut server = Command::cargo_bin("kvs-server").unwrap();
+                        let mut child = server
+                            .args(&[
+                                "--engine",
+                                &para.engine,
+                                "--threadpool",
+                                &para.pool,
+                                "--addr",
+                                "127.0.0.1:5000",
+                            ])
+                            .env("RUST_LOG", "warn")
+                            .current_dir(&temp_dir)
+                            .spawn()
+                            .unwrap();
+                        let handle = thread::spawn(move || {
+                            let _ = receiver.recv(); // wait for main thread to finish
+                            child.kill().expect("server exited before killed");
+                        });
+                        thread::sleep(Duration::from_secs(1));
+
+                        for i in 0..s.key.len() {
+                            let mut client = KvsClient::new("127.0.0.1:5000".parse().unwrap());
+                            client
+                                .set(s.key[i].to_owned(), s.value[i].to_owned())
+                                .expect("Unable set");
+                        }
+
+                        let start = Instant::now();
+                        for i in 0..s.key.len() {
+                            let mut client = KvsClient::new("127.0.0.1:5000".parse().unwrap());
+                            client.get(s.key[i].to_owned()).expect("Unable get");
+                        }
+                        let ret = start.elapsed();
+
+                        sender.send(()).unwrap();
+                        handle.join().unwrap();
+                        ret
                     });
-                    thread::sleep(Duration::from_secs(1));
-
-                    for i in 0..s.key.len() {
-                        let mut client = KvsClient::new("127.0.0.1:5000".parse().unwrap());
-                        client
-                            .set(s.key[i].to_owned(), s.value[i].to_owned())
-                            .expect("Unable set");
-                    }
-
-                    let start = Instant::now();
-                    for i in 0..s.key.len() {
-                        let mut client = KvsClient::new("127.0.0.1:5000".parse().unwrap());
-                        client.get(s.key[i].to_owned()).expect("Unable get");
-                    }
-                    let ret = start.elapsed();
-
-                    sender.send(()).unwrap();
-                    handle.join().unwrap();
-                    ret
-                });
-            });
+                },
+            );
         })
         .for_each(|_| {});
 }
 
-// criterion_group!(benches, write_bench);
-criterion_group!(benches, write_bench, get_bench);
+criterion_group!(benches, thread_pool_write_bench, thread_pool_get_bench);
 criterion_main!(benches);
