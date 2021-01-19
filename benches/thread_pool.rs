@@ -1,12 +1,16 @@
-#[macro_use]
-extern crate slog;
-
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use kvs::{thread_pool::*, KvSled, KvStore, KvsClient, KvsServer};
+use assert_cmd::prelude::CommandCargoExt;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use kvs::KvsClient;
 use rand::distributions::Alphanumeric;
 use rand::prelude::*;
 use rand::Rng;
-use std::{fmt, thread};
+use std::{
+    fmt,
+    process::Command,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
 use tempfile::TempDir;
 
 #[derive(Debug)]
@@ -46,164 +50,104 @@ fn random_string_with_length(rng: &mut StdRng, len: usize) -> Vec<String> {
 }
 
 fn write_bench(c: &mut Criterion) {
-    let para = Para::new("kvs".to_string(), "SharedQueueThreadPool".to_string(), 100);
-    c.bench_with_input(BenchmarkId::new("write_bench", &para), &para, |b, s| {
-        b.iter_batched(
-            || {
-                let temp_dir = TempDir::new().unwrap();
-                let store = KvStore::open(temp_dir.into_path()).unwrap();
-                let cpus = num_cpus::get();
-                let pool = SharedQueueThreadPool::new(cpus as u32).unwrap();
-                let mut server =
-                    KvsServer::new(store, pool, slog::Logger::root(slog::Discard, o!())).unwrap();
-                let handle =
-                    thread::spawn(move || server.run("127.0.0.1:4000".parse().unwrap()).unwrap());
-            },
-            |()| {
-                // let handle =
-                //     thread::spawn(move || server.run("127.0.0.1:4000".parse().unwrap()).unwrap());
-                let mut client = KvsClient::new("127.0.0.1:4000".parse().unwrap());
-                for i in 0..s.key.len() {
-                    client
-                        .set(s.key[i].to_owned(), s.value[i].to_owned())
+    vec!["naive", "share", "rayon"]
+        .iter()
+        .map(|pool| {
+            let para = Para::new("kvs".to_string(), pool.to_string(), 100);
+            c.bench_with_input(BenchmarkId::new("write_bench", &para), &para, |b, s| {
+                b.iter_custom(|_iters| {
+                    let (sender, receiver) = mpsc::sync_channel(0);
+                    let temp_dir = TempDir::new().unwrap();
+                    let mut server = Command::cargo_bin("kvs-server").unwrap();
+                    let mut child = server
+                        .args(&[
+                            "--engine",
+                            &para.engine,
+                            "--threadpool",
+                            &para.pool,
+                            "--addr",
+                            "127.0.0.1:5000",
+                        ])
+                        .env("RUST_LOG", "warn")
+                        .current_dir(&temp_dir)
+                        .spawn()
                         .unwrap();
-                }
-                // handle.join().unwrap();
-            },
-            BatchSize::SmallInput,
-        );
-    });
-    let para = Para::new("kvs".to_string(), "RayonThreadPool".to_string(), 100);
-    c.bench_with_input(BenchmarkId::new("write_bench", &para), &para, |b, s| {
-        b.iter_batched(
-            || {
-                let temp_dir = TempDir::new().unwrap();
-                let store = KvStore::open(temp_dir.into_path()).unwrap();
-                let cpus = num_cpus::get();
-                let pool = RayonThreadPool::new(cpus as u32).unwrap();
-                let mut server =
-                    KvsServer::new(store, pool, slog::Logger::root(slog::Discard, o!())).unwrap();
-                thread::spawn(move || server.run("127.0.0.1:4000".parse().unwrap()).unwrap());
-                KvsClient::new("127.0.0.1:4000".parse().unwrap())
-            },
-            |mut client| {
-                for i in 0..s.key.len() {
-                    client
-                        .set(s.key[i].to_owned(), s.value[i].to_owned())
-                        .unwrap();
-                }
-            },
-            BatchSize::SmallInput,
-        );
-    });
-    let para = Para::new("sled".to_string(), "RayonThreadPool".to_string(), 100);
-    c.bench_with_input(BenchmarkId::new("write_bench", &para), &para, |b, s| {
-        b.iter_batched(
-            || {
-                let temp_dir = TempDir::new().unwrap();
-                let store = KvSled::open(temp_dir.into_path()).unwrap();
-                let cpus = num_cpus::get();
-                let pool = RayonThreadPool::new(cpus as u32).unwrap();
-                let mut server =
-                    KvsServer::new(store, pool, slog::Logger::root(slog::Discard, o!())).unwrap();
-                thread::spawn(move || server.run("127.0.0.1:4000".parse().unwrap()).unwrap());
-                KvsClient::new("127.0.0.1:4000".parse().unwrap())
-            },
-            |mut client| {
-                for i in 0..s.key.len() {
-                    client
-                        .set(s.key[i].to_owned(), s.value[i].to_owned())
-                        .unwrap();
-                }
-            },
-            BatchSize::SmallInput,
-        );
-    });
+                    let handle = thread::spawn(move || {
+                        let _ = receiver.recv(); // wait for main thread to finish
+                        child.kill().expect("server exited before killed");
+                    });
+                    thread::sleep(Duration::from_secs(1));
+
+                    let start = Instant::now();
+                    for i in 0..s.key.len() {
+                        let mut client = KvsClient::new("127.0.0.1:5000".parse().unwrap());
+                        client
+                            .set(s.key[i].to_owned(), s.value[i].to_owned())
+                            .expect("Unable set");
+                    }
+                    let ret = start.elapsed();
+
+                    sender.send(()).unwrap();
+                    handle.join().unwrap();
+                    ret
+                });
+            });
+        })
+        .for_each(|_| {});
 }
 
 fn get_bench(c: &mut Criterion) {
-    let para = Para::new("kvs".to_string(), "SharedQueueThreadPool".to_string(), 100);
-    c.bench_with_input(BenchmarkId::new("write_bench", &para), &para, |b, s| {
-        b.iter_batched(
-            || {
-                let temp_dir = TempDir::new().unwrap();
-                let store = KvStore::open(temp_dir.into_path()).unwrap();
-                let cpus = num_cpus::get();
-                let pool = SharedQueueThreadPool::new(cpus as u32).unwrap();
-                let mut server =
-                    KvsServer::new(store, pool, slog::Logger::root(slog::Discard, o!())).unwrap();
-                thread::spawn(move || server.run("127.0.0.1:4000".parse().unwrap()).unwrap());
-                let mut client = KvsClient::new("127.0.0.1:4000".parse().unwrap());
-                for i in 0..s.key.len() {
-                    client
-                        .set(s.key[i].to_owned(), s.value[i].to_owned())
+    vec!["naive", "share", "rayon"]
+        .iter()
+        .map(|pool| {
+            let para = Para::new("kvs".to_string(), pool.to_string(), 100);
+            c.bench_with_input(BenchmarkId::new("write_bench", &para), &para, |b, s| {
+                b.iter_custom(|_iters| {
+                    let (sender, receiver) = mpsc::sync_channel(0);
+                    let temp_dir = TempDir::new().unwrap();
+                    let mut server = Command::cargo_bin("kvs-server").unwrap();
+                    let mut child = server
+                        .args(&[
+                            "--engine",
+                            &para.engine,
+                            "--threadpool",
+                            &para.pool,
+                            "--addr",
+                            "127.0.0.1:5000",
+                        ])
+                        .env("RUST_LOG", "warn")
+                        .current_dir(&temp_dir)
+                        .spawn()
                         .unwrap();
-                }
-                KvsClient::new("127.0.0.1:4000".parse().unwrap())
-            },
-            |mut client| {
-                for i in 0..s.key.len() {
-                    client.get(s.key[i].to_owned()).unwrap();
-                }
-            },
-            BatchSize::SmallInput,
-        );
-    });
-    let para = Para::new("kvs".to_string(), "RayonThreadPool".to_string(), 100);
-    c.bench_with_input(BenchmarkId::new("write_bench", &para), &para, |b, s| {
-        b.iter_batched(
-            || {
-                let temp_dir = TempDir::new().unwrap();
-                let store = KvStore::open(temp_dir.into_path()).unwrap();
-                let cpus = num_cpus::get();
-                let pool = RayonThreadPool::new(cpus as u32).unwrap();
-                let mut server =
-                    KvsServer::new(store, pool, slog::Logger::root(slog::Discard, o!())).unwrap();
-                thread::spawn(move || server.run("127.0.0.1:4000".parse().unwrap()).unwrap());
-                let mut client = KvsClient::new("127.0.0.1:4000".parse().unwrap());
-                for i in 0..s.key.len() {
-                    client
-                        .set(s.key[i].to_owned(), s.value[i].to_owned())
-                        .unwrap();
-                }
-                KvsClient::new("127.0.0.1:4000".parse().unwrap())
-            },
-            |mut client| {
-                for i in 0..s.key.len() {
-                    client.get(s.key[i].to_owned()).unwrap();
-                }
-            },
-            BatchSize::SmallInput,
-        );
-    });
-    let para = Para::new("sled".to_string(), "RayonThreadPool".to_string(), 100);
-    c.bench_with_input(BenchmarkId::new("write_bench", &para), &para, |b, s| {
-        b.iter_batched(
-            || {
-                let temp_dir = TempDir::new().unwrap();
-                let store = KvSled::open(temp_dir.into_path()).unwrap();
-                let cpus = num_cpus::get();
-                let pool = RayonThreadPool::new(cpus as u32).unwrap();
-                let mut server =
-                    KvsServer::new(store, pool, slog::Logger::root(slog::Discard, o!())).unwrap();
-                thread::spawn(move || server.run("127.0.0.1:4000".parse().unwrap()).unwrap());
-                let mut client = KvsClient::new("127.0.0.1:4000".parse().unwrap());
-                for i in 0..s.key.len() {
-                    client
-                        .set(s.key[i].to_owned(), s.value[i].to_owned())
-                        .unwrap();
-                }
-                KvsClient::new("127.0.0.1:4000".parse().unwrap())
-            },
-            |mut client| {
-                for i in 0..s.key.len() {
-                    client.get(s.key[i].to_owned()).unwrap();
-                }
-            },
-            BatchSize::SmallInput,
-        );
-    });
+                    let handle = thread::spawn(move || {
+                        let _ = receiver.recv(); // wait for main thread to finish
+                        child.kill().expect("server exited before killed");
+                    });
+                    thread::sleep(Duration::from_secs(1));
+
+                    for i in 0..s.key.len() {
+                        let mut client = KvsClient::new("127.0.0.1:5000".parse().unwrap());
+                        client
+                            .set(s.key[i].to_owned(), s.value[i].to_owned())
+                            .expect("Unable set");
+                    }
+
+                    let start = Instant::now();
+                    for i in 0..s.key.len() {
+                        let mut client = KvsClient::new("127.0.0.1:5000".parse().unwrap());
+                        client.get(s.key[i].to_owned()).expect("Unable get");
+                    }
+                    let ret = start.elapsed();
+
+                    sender.send(()).unwrap();
+                    handle.join().unwrap();
+                    ret
+                });
+            });
+        })
+        .for_each(|_| {});
 }
 
+// criterion_group!(benches, write_bench);
 criterion_group!(benches, write_bench, get_bench);
 criterion_main!(benches);
