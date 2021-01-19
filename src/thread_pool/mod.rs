@@ -22,3 +22,15 @@ mod shared_queue;
 pub use self::rayon::RayonThreadPool;
 pub use naive::NaiveThreadPool;
 pub use shared_queue::SharedQueueThreadPool;
+
+/// Thread Pool Type
+#[allow(non_camel_case_types)]
+#[derive(Debug)]
+pub enum ThreadPoolType {
+    /// NaiveThreadPool
+    NaiveThreadPool,
+    /// SharedQueueThreadPool
+    SharedQueueThreadPool,
+    /// RayonThreadPool
+    RayonThreadPool,
+}
