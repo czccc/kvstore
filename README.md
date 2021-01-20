@@ -1,4 +1,4 @@
-# Key/Value store System
+# Key/Value Storage System
 
 This project is followed with [Talent Plan](https://github.com/pingcap/talent-plan) from [PingCAP University](https://university.pingcap.com/). The origin documents related to this project is copied into [doc](./doc) directory
 
