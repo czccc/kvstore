@@ -206,6 +206,21 @@ impl KvsEngine for KvStore {
             Err(KvError::KeyNotFound)
         }
     }
+
+    fn range_last(
+        &self,
+        range: impl std::ops::RangeBounds<String>,
+    ) -> Result<Option<(String, String)>> {
+        let index = self.index.read().unwrap();
+        let key = index.range(range).last().map(|(k, v)| k.to_string());
+        match key {
+            Some(key) => {
+                let value = self.get(key)?.unwrap();
+                Ok(Some((key, value)))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 impl TimeStampOracle for KvStore {

@@ -63,6 +63,20 @@ impl KvsEngine for KvSled {
             Err(_) => Err(KvError::Unknown),
         }
     }
+
+    fn range_last(
+        &self,
+        range: impl std::ops::RangeBounds<String>,
+    ) -> Result<Option<(String, String)>> {
+        match self.db.range(range).last() {
+            Some(Ok((k, v))) => Ok(Some((
+                from_utf8(k.to_vec().as_ref()).unwrap().to_string(),
+                from_utf8(v.to_vec().as_ref()).unwrap().to_string(),
+            ))),
+            Some(Err(e)) => Err(KvError::StringError(e.to_string())),
+            None => Ok(None),
+        }
+    }
 }
 
 impl TimeStampOracle for KvSled {
