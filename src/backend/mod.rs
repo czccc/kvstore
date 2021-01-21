@@ -26,6 +26,12 @@ pub trait KvsEngine: Clone + Send + 'static {
     fn remove(&self, key: String) -> Result<()>;
 }
 
+/// TimeStamp Oracle used to generate unique timestamp
+pub trait TimeStampOracle {
+    /// Generate Transaction ts
+    fn next_timestamp(&self) -> Result<u64>;
+}
+
 /// Backend Engine
 #[allow(non_camel_case_types)]
 #[derive(Debug)]
