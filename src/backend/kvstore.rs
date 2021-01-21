@@ -221,6 +221,8 @@ impl TimeStampOracle for KvStore {
     }
 }
 
+impl KvsBackend for KvStore {}
+
 fn read_all_logs(path: &Path) -> Result<Vec<u64>> {
     let paths = fs::read_dir(path)?;
     let mut gen_list = Vec::new();

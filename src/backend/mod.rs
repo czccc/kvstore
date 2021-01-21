@@ -8,7 +8,7 @@ mod kvsled;
 mod kvstore;
 
 /// The KvsEngine trait supports the following methods:
-// pub trait KvsBackend: KvsEngine + Clone + Send + 'static {}
+pub trait KvsBackend: KvsEngine + TimeStampOracle {}
 
 /// The KvsEngine trait supports the following methods:
 pub trait KvsEngine: Clone + Send + 'static {

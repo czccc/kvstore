@@ -77,3 +77,5 @@ impl TimeStampOracle for KvSled {
         Ok(ts)
     }
 }
+
+impl KvsBackend for KvSled {}
