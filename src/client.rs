@@ -23,29 +23,32 @@ impl KvsClient {
         }
     }
     /// Send set command to server, and process the response.
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let request = Request {
-            cmd: "Set".to_string(),
-            ts: 0,
-            key,
-            value: Some(value),
-            primary: String::new(),
-            commit_ts: 0,
-        };
-        let response = self.send_request(request)?;
-        match response.status.as_str() {
-            "ok" => Ok(()),
-            "err" => Err(KvError::StringError(
-                response.result.unwrap_or("Unknown Error".to_owned()),
-            )),
-            _ => Err(KvError::StringError("Unknown Status".to_owned())),
-        }
+    pub fn set(&mut self, key: String, value: String) -> Result<bool> {
+        self.txn_start()?;
+        self.txn_set(key, value)?;
+        self.txn_commit()
+        // let request = Request {
+        //     cmd: "Set".to_string(),
+        //     ts: 0,
+        //     key,
+        //     value: Some(value),
+        //     primary: String::new(),
+        //     commit_ts: 0,
+        // };
+        // let response = self.send_request(request)?;
+        // match response.status.as_str() {
+        //     "ok" => Ok(()),
+        //     "err" => Err(KvError::StringError(
+        //         response.result.unwrap_or("Unknown Error".to_owned()),
+        //     )),
+        //     _ => Err(KvError::StringError("Unknown Status".to_owned())),
+        // }
     }
     /// Send get command to server, and process the response.
     pub fn get(&mut self, key: String) -> Result<String> {
         let request = Request {
             cmd: "Get".to_string(),
-            ts: 0,
+            ts: self.start_ts,
             key,
             value: None,
             primary: String::new(),
@@ -61,23 +64,32 @@ impl KvsClient {
         }
     }
     /// Send remove command to server, and process the response.
-    pub fn remove(&mut self, key: String) -> Result<()> {
-        let request = Request {
-            cmd: "Remove".to_string(),
-            ts: 0,
-            key,
-            value: None,
-            primary: String::new(),
-            commit_ts: 0,
-        };
-        let response = self.send_request(request)?;
-        match response.status.as_str() {
-            "ok" => Ok(()),
-            "err" => Err(KvError::StringError(
-                response.result.unwrap_or("Unknown Error".to_owned()),
-            )),
-            _ => Err(KvError::StringError("Unknown Status".to_owned())),
+    pub fn remove(&mut self, key: String) -> Result<bool> {
+        let value = self.get(key.to_string())?;
+        info!("prev: {}", value);
+        if value == "" || value == "Key not found" {
+            Err(KvError::KeyNotFound)
+        } else {
+            self.txn_start()?;
+            self.txn_set(key, String::new())?;
+            self.txn_commit()
         }
+        // let request = Request {
+        //     cmd: "Remove".to_string(),
+        //     ts: 0,
+        //     key,
+        //     value: None,
+        //     primary: String::new(),
+        //     commit_ts: 0,
+        // };
+        // let response = self.send_request(request)?;
+        // match response.status.as_str() {
+        //     "ok" => Ok(()),
+        //     "err" => Err(KvError::StringError(
+        //         response.result.unwrap_or("Unknown Error".to_owned()),
+        //     )),
+        //     _ => Err(KvError::StringError("Unknown Status".to_owned())),
+        // }
     }
     fn send_request(&mut self, request: Request) -> Result<Response> {
         let stream = TcpStream::connect(self.addr).unwrap();

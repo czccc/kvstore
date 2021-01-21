@@ -213,6 +213,7 @@ impl KvsEngine for KvStore {
     ) -> Result<Option<(String, String)>> {
         let index = self.index.read().unwrap();
         let key = index.range(range).last().map(|(k, _)| k.to_string());
+        // info!("{:?}", index);
         match key {
             Some(key) => {
                 let value = self.get(key.to_string())?.unwrap();

@@ -69,10 +69,16 @@ fn handle_request<E: KvsBackend>(store: E, stream: TcpStream) -> Result<()> {
 
 fn process_request<E: KvsBackend>(store: E, req: Request) -> Response {
     match req.cmd.as_str() {
-        "Get" => match store.get(req.key) {
-            Ok(Some(value)) => Response {
+        "Get" => match store.range_last(generate_range(&req.key, "data", None, None)) {
+            Ok(Some((_, v))) => Response {
                 status: "ok".to_string(),
-                result: Some(value),
+                result: {
+                    if v.is_empty() {
+                        Some("Key not found".to_string())
+                    } else {
+                        Some(v)
+                    }
+                },
             },
             Ok(None) => Response {
                 status: "ok".to_string(),
@@ -93,14 +99,21 @@ fn process_request<E: KvsBackend>(store: E, req: Request) -> Response {
                 result: Some("Set Error!".to_string()),
             },
         },
-        "Remove" => match store.remove(req.key) {
-            Ok(_) => Response {
-                status: "ok".to_string(),
-                result: None,
+        "Remove" => match store.range_last(generate_range(&req.key, "data", None, None)) {
+            Ok(Some((k, _))) => {
+                store.remove(k).unwrap();
+                Response {
+                    status: "ok".to_string(),
+                    result: None,
+                }
+            }
+            Ok(None) => Response {
+                status: "err".to_string(),
+                result: Some("Key not found".to_string()),
             },
             Err(_) => Response {
                 status: "err".to_string(),
-                result: Some("Key not found".to_string()),
+                result: Some("Unknown".to_string()),
             },
         },
         "TSO" => match store.next_timestamp() {
