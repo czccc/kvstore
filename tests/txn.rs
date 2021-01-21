@@ -48,7 +48,7 @@ fn client_cli_txn_invalid() {
 #[test]
 fn client_cli_txn_access() {
     let engine = "kvs";
-    let addr = "127.0.0.1:4002";
+    let addr = "127.0.0.1:4000";
 
     let (sender, receiver) = mpsc::sync_channel(0);
     let temp_dir = TempDir::new().unwrap();
@@ -82,7 +82,7 @@ fn client_cli_txn_access() {
     assert_write(&mut writer, "set key2 value2");
 
     assert_write(&mut writer, "get key1");
-    assert_get(&mut reader, "Placehold");
+    assert_get(&mut reader, "Key not found");
 
     assert_write(&mut writer, "commit");
     assert_get(&mut reader, "Transaction Success");

@@ -69,53 +69,45 @@ fn handle_request<E: KvsBackend>(store: E, stream: TcpStream) -> Result<()> {
 
 fn process_request<E: KvsBackend>(store: E, req: Request) -> Response {
     match req.cmd.as_str() {
-        "Get" => match store.range_last(generate_range(&req.key, "data", None, None)) {
-            Ok(Some((_, v))) => Response {
-                status: "ok".to_string(),
-                result: {
-                    if v.is_empty() {
-                        Some("Key not found".to_string())
-                    } else {
-                        Some(v)
-                    }
-                },
-            },
-            Ok(None) => Response {
-                status: "ok".to_string(),
-                result: Some("Key not found".to_string()),
-            },
-            Err(_) => Response {
-                status: "err".to_string(),
-                result: Some("Something Wrong!".to_string()),
-            },
-        },
-        "Set" => match store.set(req.key, req.value.unwrap()) {
-            Ok(_) => Response {
-                status: "ok".to_string(),
-                result: None,
-            },
-            Err(_) => Response {
-                status: "err".to_string(),
-                result: Some("Set Error!".to_string()),
-            },
-        },
-        "Remove" => match store.range_last(generate_range(&req.key, "data", None, None)) {
-            Ok(Some((k, _))) => {
-                store.remove(k).unwrap();
-                Response {
-                    status: "ok".to_string(),
-                    result: None,
+        "Get" => {
+            loop {
+                let range = generate_range(&req.key, "lock", Some(0), Some(req.ts));
+                let lock = store.range_last(range).unwrap();
+                if let Some((k, v)) = lock {
+                    info!("Get previous Lock in Key: {:?}, Lock: {:?}", k, v);
+                    // self.back_off_maybe_clean_up_lock(req.ts, key.to_owned());
+                    continue;
+                }
+
+                let range = generate_range(&req.key, "write", Some(0), Some(req.ts));
+                let last_write = store.range_last(range).unwrap();
+                if last_write.is_none() {
+                    return Response {
+                        status: "ok".to_string(),
+                        result: Some("Key not found".to_string()),
+                    };
+                }
+                if let Ok(data_ts) = last_write.unwrap().1.parse() {
+                    let range = generate_range(&req.key, "data", Some(data_ts), Some(data_ts));
+                    let (_, value) = store.range_last(range).unwrap().unwrap();
+                    return Response {
+                        status: "ok".to_string(),
+                        result: {
+                            if value.is_empty() {
+                                Some("Key not found".to_string())
+                            } else {
+                                Some(value)
+                            }
+                        },
+                    };
+                } else {
+                    return Response {
+                        status: "err".to_string(),
+                        result: Some("Parser Write int Error".to_string()),
+                    };
                 }
             }
-            Ok(None) => Response {
-                status: "err".to_string(),
-                result: Some("Key not found".to_string()),
-            },
-            Err(_) => Response {
-                status: "err".to_string(),
-                result: Some("Unknown".to_string()),
-            },
-        },
+        }
         "TSO" => match store.next_timestamp() {
             Ok(ts) => Response {
                 status: "ok".to_string(),
