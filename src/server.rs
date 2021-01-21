@@ -5,16 +5,18 @@ use std::{
     io::{prelude::*, BufReader, BufWriter},
     net::SocketAddr,
     net::{TcpListener, TcpStream},
+    ops::Bound::*,
+    ops::RangeBounds,
     str::from_utf8,
 };
 
 /// Kvs Server
-pub struct KvsServer<E: KvsEngine, P: ThreadPool> {
+pub struct KvsServer<E: KvsBackend, P: ThreadPool> {
     store: E,
     thread_pool: P,
 }
 
-impl<E: KvsEngine, P: ThreadPool> KvsServer<E, P> {
+impl<E: KvsBackend, P: ThreadPool> KvsServer<E, P> {
     /// Construct a new Kvs Server from given engine at specific path.
     /// Use `run()` to listen on given addr.
     pub fn new(store: E, thread_pool: P) -> Result<Self> {
@@ -42,7 +44,7 @@ impl<E: KvsEngine, P: ThreadPool> KvsServer<E, P> {
     }
 }
 
-fn handle_request<E: KvsEngine>(store: E, stream: TcpStream) -> Result<()> {
+fn handle_request<E: KvsBackend>(store: E, stream: TcpStream) -> Result<()> {
     let mut reader = BufReader::new(&stream);
     let mut writer = BufWriter::new(&stream);
 
@@ -57,17 +59,15 @@ fn handle_request<E: KvsEngine>(store: E, stream: TcpStream) -> Result<()> {
     writer.write(&response_str.as_bytes())?;
     writer.flush()?;
 
-    info!(
-        "[Server] Received request from {} - Args: {}, Response: {}",
-        stream.local_addr()?,
-        request_str,
-        response_str
-    );
+    // info!(
+    //     "[Server] Received request {}, Response: {}",
+    //     request_str, response_str
+    // );
 
     Ok(())
 }
 
-fn process_request<E: KvsEngine>(store: E, req: Request) -> Response {
+fn process_request<E: KvsBackend>(store: E, req: Request) -> Response {
     match req.cmd.as_str() {
         "Get" => match store.get(req.key) {
             Ok(Some(value)) => Response {
@@ -103,9 +103,171 @@ fn process_request<E: KvsEngine>(store: E, req: Request) -> Response {
                 result: Some("Key not found".to_string()),
             },
         },
+        "TSO" => match store.next_timestamp() {
+            Ok(ts) => Response {
+                status: "ok".to_string(),
+                result: Some(ts.to_string()),
+            },
+            Err(_) => Response {
+                status: "err".to_string(),
+                result: Some("Error in get TimeStamp".to_string()),
+            },
+        },
+        "PreWrite" => {
+            // let is_set = req.value.is_some();
+            let key = req.key.as_ref();
+            let read_range = generate_range(key, "write", Some(req.ts), None);
+            match store.range_last(read_range) {
+                Ok(Some(_)) => {
+                    return Response {
+                        status: "err".to_string(),
+                        result: Some("Abort on writes after our start timestamp".to_string()),
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return Response {
+                        status: "err".to_string(),
+                        result: Some(e.to_string()),
+                    }
+                }
+            }
+            let read_range = generate_range(key, "lock", None, None);
+            match store.range_last(read_range) {
+                Ok(Some(_)) => {
+                    return Response {
+                        status: "err".to_string(),
+                        result: Some("Abort on lock at any timestamp".to_string()),
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return Response {
+                        status: "err".to_string(),
+                        result: Some(e.to_string()),
+                    }
+                }
+            }
+
+            let write_key = generate_key(key, "data", req.ts);
+            match store.set(write_key, req.value.unwrap()) {
+                Ok(_) => {}
+                Err(_) => {
+                    return Response {
+                        status: "err".to_string(),
+                        result: Some("Set Error!".to_string()),
+                    }
+                }
+            };
+            let write_key = generate_key(key, "lock", req.ts);
+            match store.set(write_key, req.primary) {
+                Ok(_) => {}
+                Err(_) => {
+                    return Response {
+                        status: "err".to_string(),
+                        result: Some("Set Error!".to_string()),
+                    }
+                }
+            };
+            Response {
+                status: "ok".to_owned(),
+                result: None,
+            }
+        }
+        "Commit" => {
+            if req.primary == req.key {
+                let read_range = generate_range(&req.key, "lock", Some(req.ts), Some(req.ts));
+                match store.range_last(read_range) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        return Response {
+                            status: "err".to_string(),
+                            result: Some("Abort on lock clear resolved by others".to_string()),
+                        }
+                    }
+                    Err(e) => {
+                        return Response {
+                            status: "err".to_string(),
+                            result: Some(e.to_string()),
+                        }
+                    }
+                }
+
+                let write_key = generate_key(&req.key, "write", req.commit_ts);
+                match store.set(write_key, req.ts.to_string()) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        return Response {
+                            status: "err".to_string(),
+                            result: Some("Set Error!".to_string()),
+                        }
+                    }
+                };
+                let remove_key = generate_key(&req.key, "lock", req.ts);
+                match store.remove(remove_key) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        return Response {
+                            status: "err".to_string(),
+                            result: Some("Remove Error!".to_string()),
+                        }
+                    }
+                };
+                Response {
+                    status: "ok".to_owned(),
+                    result: None,
+                }
+            } else {
+                let write_key = generate_key(&req.key, "write", req.commit_ts);
+                match store.set(write_key, req.ts.to_string()) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        return Response {
+                            status: "err".to_string(),
+                            result: Some("Set Error!".to_string()),
+                        }
+                    }
+                };
+                let remove_key = generate_key(&req.key, "lock", req.ts);
+                match store.remove(remove_key) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        return Response {
+                            status: "err".to_string(),
+                            result: Some("Remove Error!".to_string()),
+                        }
+                    }
+                };
+                Response {
+                    status: "ok".to_owned(),
+                    result: None,
+                }
+            }
+        }
         _ => Response {
             status: "err".to_string(),
             result: Some("Unknown Command!".to_string()),
         },
     }
+}
+
+fn generate_key(key: &str, col: &str, ts: u64) -> String {
+    format!("{}-{}-{:020}", key, col, ts)
+}
+
+fn generate_range(
+    key: &str,
+    col: &str,
+    start: Option<u64>,
+    end: Option<u64>,
+) -> impl RangeBounds<String> {
+    // key + "-" + col + &ts.to_string()
+
+    let key_start_inclusive = start.map_or(Included(generate_key(key, col, u64::MIN)), |v| {
+        Included(generate_key(key, col, v))
+    });
+    let key_end_inclusive = end.map_or(Included(generate_key(key, col, u64::MAX)), |v| {
+        Included(generate_key(key, col, v))
+    });
+    (key_start_inclusive, key_end_inclusive)
 }

@@ -212,10 +212,10 @@ impl KvsEngine for KvStore {
         range: impl std::ops::RangeBounds<String>,
     ) -> Result<Option<(String, String)>> {
         let index = self.index.read().unwrap();
-        let key = index.range(range).last().map(|(k, v)| k.to_string());
+        let key = index.range(range).last().map(|(k, _)| k.to_string());
         match key {
             Some(key) => {
-                let value = self.get(key)?.unwrap();
+                let value = self.get(key.to_string())?.unwrap();
                 Ok(Some((key, value)))
             }
             None => Ok(None),
