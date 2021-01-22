@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Request Protocol struct for client-server request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
-    /// Command, which can be "Get", "Set", "Remove", "TSO", "PreWrite" and "Commit".
+    /// Command, which can be "TSO", "Get", "PreWrite" and "Commit".
     pub cmd: String,
     /// TimeStamp used in txn
     pub ts: u64,

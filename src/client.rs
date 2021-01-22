@@ -6,7 +6,6 @@ use std::{
 
 /// Kvs Cilent with an TCP stream
 pub struct KvsClient {
-    // stream: TcpStream,
     addr: SocketAddr,
     writes: Vec<(String, String)>,
     start_ts: u64,
@@ -16,26 +15,32 @@ impl KvsClient {
     /// Return a kvs client at given SocketAddr
     pub fn new(addr: SocketAddr) -> Self {
         Self {
-            // stream,
             addr,
             writes: Vec::new(),
             start_ts: 0,
         }
     }
-    /// Send set command to server, and process the response.
+    /// Single set command used in a transaction.
+    /// Return whether transaction success or not.
     pub fn set(&mut self, key: String, value: String) -> Result<bool> {
         self.txn_start()?;
         self.txn_set(key, value)?;
         self.txn_commit()
     }
-    /// Send get command to server, and process the response.
+    /// Single get command used in a transaction
+    /// Return the value of given key,
+    /// or "Key not found" when key is not in KvsServer or value is empty.
     pub fn get(&mut self, key: String) -> Result<String> {
         self.txn_start()?;
         let value = self.txn_get(key);
         self.txn_commit()?;
         value
     }
-    /// Send remove command to server, and process the response.
+    /// Single Remove command used in a transaction.
+    /// Return whether transaction success or not
+    /// or an Err("Key not found") when key is not in KvsServer or value is empty.
+    ///
+    /// For now, remove a key is same with set a key to empty string.
     pub fn remove(&mut self, key: String) -> Result<bool> {
         let value = self.get(key.to_string())?;
         info!("prev: {}", value);
@@ -64,6 +69,7 @@ impl KvsClient {
 }
 
 impl KvsClient {
+    /// Start a transaction with acquire a timestamp from KvsServer
     pub fn txn_start(&mut self) -> Result<()> {
         self.start_ts = self.get_ts()?;
         info!("[Client {}] - Start txn", self.start_ts);
@@ -89,6 +95,7 @@ impl KvsClient {
         }
     }
 
+    /// Get a value of given key from transaction snapshot
     pub fn txn_get(&mut self, key: String) -> Result<String> {
         info!("[Client {}] - get key: {}", self.start_ts, key);
         let request = Request {
@@ -109,6 +116,9 @@ impl KvsClient {
         }
         // Ok(String::from("Placehold"))
     }
+
+    /// Set a value of given key in transaction,
+    /// for now, it just push this operation into a queue.
     pub fn txn_set(&mut self, key: String, value: String) -> Result<()> {
         info!(
             "[Client {}] - set key: {} value: {}",
@@ -117,6 +127,8 @@ impl KvsClient {
         self.writes.push((key, value));
         Ok(())
     }
+
+    /// Commit current transaction. Use Percolator as commit method
     pub fn txn_commit(&mut self) -> Result<bool> {
         if self.writes.is_empty() {
             return Ok(true);

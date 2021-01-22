@@ -381,7 +381,7 @@ fn back_off_maybe_clean_up_lock<E: KvsBackend>(
                 } else {
                     info!("Pending Remove Key: {:?} and Roll back", key);
                     let _ = store.remove(key);
-                    // pending_lock.lock().unwrap().remove(&primary_key);
+                    pending_lock.lock().unwrap().remove(&primary_key);
                 }
             }
         }

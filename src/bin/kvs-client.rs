@@ -1,6 +1,3 @@
-// #[macro_use]
-// extern crate log;
-
 use kvs::{KvsClient, Result};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -160,7 +157,7 @@ fn parse_txn_args(args: Vec<&str>) -> TxnArgs {
     } else if args.len() == 1 && args[0] == "commit" {
         TxnArgs::Commit
     } else {
-        log::error!("Unknown args {:?}", args);
+        log::warn!("Unknown args {:?}", args);
         TxnArgs::Unknown
     }
 }
