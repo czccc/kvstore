@@ -1,4 +1,5 @@
 use assert_cmd::prelude::*;
+use kvs::*;
 use mpsc::SyncSender;
 use std::{
     io::{prelude::*, BufReader, BufWriter},
@@ -350,6 +351,250 @@ fn client_cli_txn_anti_dependency_cycles() {
 
         client3.get("key3", "300");
         client3.get("key4", "400");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+struct Proxy {
+    addr: String,
+    server_addr: String,
+    drop_req: bool,
+    drop_resp: bool,
+    fail_primary: bool,
+}
+
+fn proxy_hook(proxy: Proxy) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let listener = std::net::TcpListener::bind(proxy.addr).unwrap();
+        // accept connections and process them serially
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    let mut reader = BufReader::new(&stream);
+                    let mut writer = BufWriter::new(&stream);
+
+                    let mut buf = vec![];
+                    let _len = reader.read_until(b'}', &mut buf).unwrap();
+                    let request_str = std::str::from_utf8(&buf).unwrap();
+
+                    let request: Request = serde_json::from_str(request_str).unwrap();
+
+                    let response = if request.cmd == "Commit"
+                        && proxy.drop_req
+                        && !(request.key == request.primary && !proxy.fail_primary)
+                    {
+                        Response {
+                            status: "err".to_string(),
+                            result: Some("Request Timeout!".to_string()),
+                        }
+                    } else {
+                        let stream = std::net::TcpStream::connect(&proxy.server_addr).unwrap();
+                        let mut s_reader = BufReader::new(&stream);
+                        let mut s_writer = BufWriter::new(&stream);
+
+                        let buf = serde_json::to_string(&request).unwrap();
+                        s_writer.write(buf.as_bytes()).unwrap();
+                        s_writer.flush().unwrap();
+
+                        let mut buf = String::new();
+                        s_reader.read_line(&mut buf).unwrap();
+                        serde_json::from_str(&buf).unwrap()
+                    };
+                    let response = if request.cmd == "Commit" && proxy.drop_resp {
+                        Response {
+                            status: "err".to_string(),
+                            result: Some("Response Timeout!".to_string()),
+                        }
+                    } else {
+                        response
+                    };
+                    let response_str = serde_json::to_string(&response).unwrap();
+                    writer.write(&response_str.as_bytes()).unwrap();
+                    writer.flush().unwrap();
+                }
+                Err(e) => println!("{}", e),
+            }
+        }
+    })
+}
+
+#[test]
+fn client_cli_txn_test_proxy_with_nothing_drop() {
+    let server_addr = "127.0.0.1:4010";
+    let addr = "127.0.0.1:4011";
+    let proxy = Proxy {
+        addr: addr.to_string(),
+        server_addr: server_addr.to_string(),
+        drop_req: false,
+        drop_resp: false,
+        fail_primary: false,
+    };
+    let _proxy_handle = proxy_hook(proxy);
+    thread::sleep(Duration::from_secs(1));
+
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, server_addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+        let mut client2 = ClientWrapper::new(addr);
+
+        client1.get("key1", "100");
+        client1.get("key2", "200");
+        client2.get("key1", "100");
+        client2.get("key2", "200");
+
+        client1.set("key1", "101");
+        client2.set("key2", "201");
+        client1.commit("Transaction Success");
+        client2.commit("Transaction Success");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_commit_primary_drop_secondary_requests() {
+    let server_addr = "127.0.0.1:4012";
+    let addr = "127.0.0.1:4013";
+    let proxy = Proxy {
+        addr: addr.to_string(),
+        server_addr: server_addr.to_string(),
+        drop_req: true,
+        drop_resp: false,
+        fail_primary: false,
+    };
+    let _proxy_handle = proxy_hook(proxy);
+    thread::sleep(Duration::from_secs(1));
+
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, server_addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.set("key3", "300");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+
+        client1.get("key1", "100");
+        client1.get("key2", "200");
+        client1.get("key3", "300");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_commit_primary_success() {
+    let server_addr = "127.0.0.1:4014";
+    let addr = "127.0.0.1:4015";
+    let proxy = Proxy {
+        addr: addr.to_string(),
+        server_addr: server_addr.to_string(),
+        drop_req: true,
+        drop_resp: false,
+        fail_primary: false,
+    };
+    let _proxy_handle = proxy_hook(proxy);
+    thread::sleep(Duration::from_secs(1));
+
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, server_addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.set("key3", "300");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+
+        client1.get("key1", "100");
+        client1.get("key2", "200");
+        client1.get("key3", "300");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_commit_primary_success_without_response() {
+    let server_addr = "127.0.0.1:4016";
+    let addr = "127.0.0.1:4017";
+    let proxy = Proxy {
+        addr: addr.to_string(),
+        server_addr: server_addr.to_string(),
+        drop_req: false,
+        drop_resp: true,
+        fail_primary: false,
+    };
+    let _proxy_handle = proxy_hook(proxy);
+    thread::sleep(Duration::from_secs(1));
+
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, server_addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.set("key3", "300");
+        client0.commit("Transaction Failed");
+
+        let mut client1 = ClientWrapper::new(addr);
+
+        client1.get("key1", "100");
+        client1.get("key2", "200");
+        client1.get("key3", "300");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_commit_primary_fail() {
+    let server_addr = "127.0.0.1:4018";
+    let addr = "127.0.0.1:4019";
+    let proxy = Proxy {
+        addr: addr.to_string(),
+        server_addr: server_addr.to_string(),
+        drop_req: true,
+        drop_resp: false,
+        fail_primary: true,
+    };
+    let _proxy_handle = proxy_hook(proxy);
+    thread::sleep(Duration::from_secs(1));
+
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, server_addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.set("key3", "300");
+        client0.commit("Transaction Failed");
+
+        let mut client1 = ClientWrapper::new(addr);
+
+        client1.get("key1", "Key not found");
+        client1.get("key2", "Key not found");
+        client1.get("key3", "Key not found");
 
         sender.send(()).unwrap();
         handle.join().unwrap();
