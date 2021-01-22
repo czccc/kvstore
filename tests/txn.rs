@@ -600,3 +600,42 @@ fn client_cli_txn_commit_primary_fail() {
         handle.join().unwrap();
     }
 }
+
+#[test]
+fn client_cli_txn_server_crash() {
+    let server_addr = "127.0.0.1:4020";
+    let addr = "127.0.0.1:4021";
+    let proxy = Proxy {
+        addr: addr.to_string(),
+        server_addr: server_addr.to_string(),
+        drop_req: true,
+        drop_resp: false,
+        fail_primary: true,
+    };
+    let _proxy_handle = proxy_hook(proxy);
+    thread::sleep(Duration::from_secs(1));
+
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, server_addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.set("key3", "300");
+        client0.commit("Transaction Failed");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+        let (sender, handle) = open_server(engine, server_addr, &temp_dir);
+
+        let mut client1 = ClientWrapper::new(addr);
+
+        client1.get("key1", "Key not found");
+        client1.get("key2", "Key not found");
+        client1.get("key3", "Key not found");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
