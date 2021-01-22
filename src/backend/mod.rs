@@ -1,5 +1,5 @@
 use crate::{KvError, Result};
-use std::str::FromStr;
+use std::{ops::RangeBounds, str::FromStr};
 
 pub use kvsled::KvSled;
 pub use kvstore::KvStore;
@@ -8,7 +8,7 @@ mod kvsled;
 mod kvstore;
 
 /// The KvsEngine trait supports the following methods:
-// pub trait KvsBackend: KvsEngine + Clone + Send + 'static {}
+pub trait KvsBackend: KvsEngine + TimeStampOracle {}
 
 /// The KvsEngine trait supports the following methods:
 pub trait KvsEngine: Clone + Send + 'static {
@@ -24,6 +24,16 @@ pub trait KvsEngine: Clone + Send + 'static {
     ///
     ///Return an error if the key does not exit or value is not read successfully.
     fn remove(&self, key: String) -> Result<()>;
+    ///Get the last value within a given string key range.
+    ///
+    ///Return an error if the value is not read successfully.
+    fn range_last(&self, range: impl RangeBounds<String>) -> Result<Option<(String, String)>>;
+}
+
+/// TimeStamp Oracle used to generate unique timestamp
+pub trait TimeStampOracle {
+    /// Generate Transaction ts
+    fn next_timestamp(&self) -> Result<u64>;
 }
 
 /// Backend Engine

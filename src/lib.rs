@@ -1,4 +1,4 @@
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 //! A key-value store system
 
 #[macro_use]
@@ -12,7 +12,7 @@ mod server;
 /// Thread Pool
 pub mod thread_pool;
 
-pub use backend::{Engine, KvSled, KvStore, KvsEngine};
+pub use backend::{Engine, KvSled, KvStore, KvsBackend, KvsEngine, TimeStampOracle};
 pub use client::KvsClient;
 pub use common::{Request, Response};
 pub use error::{KvError, Result};

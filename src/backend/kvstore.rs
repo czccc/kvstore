@@ -1,4 +1,5 @@
 use crate::*;
+use backend::TimeStampOracle;
 use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
 use std::{
@@ -16,7 +17,7 @@ use std::{
     path::Path,
     path::PathBuf,
     sync::Arc,
-    sync::RwLock,
+    sync::{atomic::AtomicU64, RwLock},
 };
 
 const COMPACTION_THRESHOLD: u64 = 1024 * 1024;
@@ -30,6 +31,7 @@ pub struct KvStore {
     writer: Arc<RwLock<BufWriterWithPos<File>>>,
     index: Arc<RwLock<BTreeMap<String, CommandPos>>>,
     uncompacted: Arc<RwLock<u64>>,
+    tso: Arc<AtomicU64>,
 }
 
 // impl Clone for KvStore {
@@ -69,6 +71,11 @@ impl KvStore {
             BufReaderWithPos::new(File::open(log_path(&path, current_gen))?)?,
         );
 
+        let tso: u64 = fs::read_to_string(".tso")
+            .unwrap_or("0".to_string())
+            .parse()
+            .expect("could parse string to u64");
+
         Ok(KvStore {
             path: Arc::new(RwLock::new(path)),
             readers: Arc::new(RwLock::new(readers)),
@@ -76,6 +83,7 @@ impl KvStore {
             current_gen: Arc::new(RwLock::new(current_gen)),
             index: Arc::new(RwLock::new(index)),
             uncompacted: Arc::new(RwLock::new(uncompacted)),
+            tso: Arc::new(AtomicU64::new(tso + 1)),
         })
     }
 
@@ -198,7 +206,38 @@ impl KvsEngine for KvStore {
             Err(KvError::KeyNotFound)
         }
     }
+
+    fn range_last(
+        &self,
+        range: impl std::ops::RangeBounds<String>,
+    ) -> Result<Option<(String, String)>> {
+        let index = self.index.read().unwrap();
+        let key = index.range(range).last().map(|(k, _)| k.to_string());
+        // info!("{:?}", index);
+        match key {
+            Some(key) => {
+                let value = self.get(key.to_string())?.unwrap();
+                Ok(Some((key, value)))
+            }
+            None => Ok(None),
+        }
+    }
 }
+
+impl TimeStampOracle for KvStore {
+    fn next_timestamp(&self) -> Result<u64> {
+        let ts = self.tso.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut tso_file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(".tso")?;
+        tso_file.write(ts.to_string().as_bytes())?;
+        tso_file.flush()?;
+        Ok(ts)
+    }
+}
+
+impl KvsBackend for KvStore {}
 
 fn read_all_logs(path: &Path) -> Result<Vec<u64>> {
     let paths = fs::read_dir(path)?;

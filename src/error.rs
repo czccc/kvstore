@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, num::ParseIntError};
 
 use thiserror::Error;
 
@@ -11,13 +11,16 @@ pub enum KvError {
     /// IO Error
     #[error("{0}")]
     Io(#[from] io::Error),
+    /// Parser int Error
+    #[error("{0}")]
+    ParseInt(#[from] ParseIntError),
     /// Serialization or deserialization error.
     #[error("{0}")]
     Serde(#[from] serde_json::Error),
     /// Unknown Engine
     #[error("Unknown Engine: {0}")]
     ParserError(String),
-    /// Unknown Engine
+    /// String Error
     #[error("{0}")]
     StringError(String),
     /// Unknown Error
