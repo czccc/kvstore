@@ -104,57 +104,254 @@ fn client_cli_txn_invalid() {
         .failure();
 }
 
-fn client_cli_txn_single_access(engine: &str, addr: &str) {
-    let temp_dir = TempDir::new().unwrap();
-    let (sender, handle) = open_server(engine, addr, &temp_dir);
-
-    let mut client0 = ClientWrapper::new(addr);
-    client0.set("key1", "100");
-    client0.set("key2", "200");
-    client0.get("key1", "Key not found");
-    client0.get("key3", "Key not found");
-    client0.commit("Transaction Success");
-
-    sender.send(()).unwrap();
-    handle.join().unwrap();
-}
 #[test]
-fn client_cli_txn_single_access_kvs() {
-    client_cli_txn_single_access("kvs", "127.0.0.1:5001");
-}
+fn client_cli_txn_single_access() {
+    let addr = "127.0.0.1:4001";
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, addr, &temp_dir);
 
-#[test]
-fn client_cli_txn_single_access_sled() {
-    client_cli_txn_single_access("sled", "127.0.0.1:4001");
-}
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.get("key1", "Key not found");
+        client0.get("key3", "Key not found");
+        client0.commit("Transaction Success");
 
-fn client_cli_txn_pmp_read_predicates(engine: &str, addr: &str) {
-    let temp_dir = TempDir::new().unwrap();
-    let (sender, handle) = open_server(engine, addr, &temp_dir);
-
-    let mut client0 = ClientWrapper::new(addr);
-    client0.set("key1", "100");
-    client0.set("key2", "200");
-    client0.commit("Transaction Success");
-
-    let mut client1 = ClientWrapper::new(addr);
-    client1.get("key3", "Key not found");
-
-    let mut client2 = ClientWrapper::new(addr);
-    client2.set("key3", "300");
-    client2.commit("Transaction Success");
-
-    client1.get("key3", "Key not found");
-
-    sender.send(()).unwrap();
-    handle.join().unwrap();
-}
-#[test]
-fn client_cli_txn_pmp_read_predicates_kvs() {
-    client_cli_txn_pmp_read_predicates("kvs", "127.0.0.1:4002");
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
 }
 
 #[test]
-fn client_cli_txn_pmp_read_predicates_sled() {
-    client_cli_txn_pmp_read_predicates("sled", "127.0.0.1:4003");
+fn client_cli_txn_pmp_read_predicates() {
+    let addr = "127.0.0.1:4002";
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+        client1.get("key3", "Key not found");
+
+        let mut client2 = ClientWrapper::new(addr);
+        client2.set("key3", "300");
+        client2.commit("Transaction Success");
+
+        client1.get("key3", "Key not found");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_pmp_write_predicates() {
+    let addr = "127.0.0.1:4003";
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+        let mut client2 = ClientWrapper::new(addr);
+
+        client1.set("key1", "200");
+        client1.set("key2", "300");
+        client1.get("key2", "200");
+
+        client2.set("key2", "400");
+
+        client1.commit("Transaction Success");
+        client2.commit("Transaction Failed");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_lost_update() {
+    let addr = "127.0.0.1:4004";
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+        let mut client2 = ClientWrapper::new(addr);
+
+        client1.get("key1", "100");
+        client2.get("key1", "100");
+
+        client1.set("key1", "101");
+        client2.set("key1", "101");
+
+        client1.commit("Transaction Success");
+        client2.commit("Transaction Failed");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_read_skew_read_only() {
+    let addr = "127.0.0.1:4005";
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+        let mut client2 = ClientWrapper::new(addr);
+
+        client1.get("key1", "100");
+        client2.get("key1", "100");
+        client2.get("key2", "200");
+
+        client2.set("key1", "101");
+        client2.set("key2", "201");
+        client2.commit("Transaction Success");
+
+        client1.get("key2", "200");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_read_skew_predicate_dependencies() {
+    let addr = "127.0.0.1:4006";
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+        let mut client2 = ClientWrapper::new(addr);
+
+        client1.get("key1", "100");
+        client1.get("key2", "200");
+
+        client2.set("key3", "300");
+        client2.commit("Transaction Success");
+
+        client1.get("key3", "Key not found");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_read_skew_write_predicate() {
+    let addr = "127.0.0.1:4007";
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+        let mut client2 = ClientWrapper::new(addr);
+
+        client1.get("key1", "100");
+        client2.get("key1", "100");
+        client2.get("key2", "200");
+
+        client2.set("key1", "101");
+        client2.set("key2", "201");
+        client2.commit("Transaction Success");
+
+        client1.set("key2", "300");
+        client1.commit("Transaction Failed");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_write_skew() {
+    let addr = "127.0.0.1:4008";
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+        let mut client2 = ClientWrapper::new(addr);
+
+        client1.get("key1", "100");
+        client1.get("key2", "200");
+        client2.get("key1", "100");
+        client2.get("key2", "200");
+
+        client1.set("key1", "101");
+        client2.set("key2", "201");
+        client1.commit("Transaction Success");
+        client2.commit("Transaction Success");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_anti_dependency_cycles() {
+    let addr = "127.0.0.1:4009";
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.commit("Transaction Success");
+
+        let mut client1 = ClientWrapper::new(addr);
+        let mut client2 = ClientWrapper::new(addr);
+
+        client1.set("key3", "300");
+        client2.set("key4", "400");
+        client1.commit("Transaction Success");
+        client2.commit("Transaction Success");
+
+        let mut client3 = ClientWrapper::new(addr);
+
+        client3.get("key3", "300");
+        client3.get("key4", "400");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
 }

@@ -148,9 +148,7 @@ impl KvsClient {
                     );
                 }
                 "err" => {
-                    return Err(KvError::StringError(
-                        response.result.unwrap_or("Unknown Error".to_owned()),
-                    ))
+                    return Ok(false);
                 }
                 _ => return Err(KvError::StringError("Unknown Status".to_owned())),
             };
@@ -178,9 +176,7 @@ impl KvsClient {
                 );
             }
             "err" => {
-                return Err(KvError::StringError(
-                    response.result.unwrap_or("Unknown Error".to_owned()),
-                ))
+                return Ok(false);
             }
             _ => return Err(KvError::StringError("Unknown Status".to_owned())),
         };

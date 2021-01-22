@@ -127,8 +127,11 @@ fn main() -> Result<()> {
                         client.txn_set(k, v)?;
                     }
                     TxnArgs::Commit => {
-                        client.txn_commit()?;
-                        println!("Transaction Success");
+                        if client.txn_commit()? {
+                            println!("Transaction Success");
+                        } else {
+                            println!("Transaction Failed");
+                        }
                         exit(0);
                     }
                     TxnArgs::Unknown => {
@@ -138,7 +141,7 @@ fn main() -> Result<()> {
             }
         }
     };
-    log::info!("Client exit!");
+    log::info!("Client exit without commit!");
     Ok(())
 }
 
