@@ -3,7 +3,11 @@
 
 use kvs::{KvsClient, Result};
 use serde::{Deserialize, Serialize};
-use std::{io, net::SocketAddr, process::exit};
+use std::{
+    io::{self, BufRead},
+    net::SocketAddr,
+    process::exit,
+};
 use structopt::StructOpt;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4000";
@@ -105,9 +109,14 @@ fn main() -> Result<()> {
             let mut client = KvsClient::new(addr);
             client.txn_start()?;
 
+            let stdin = io::stdin();
+            let mut handle = stdin.lock();
+
             loop {
                 let mut input = String::new();
-                io::stdin().read_line(&mut input)?;
+                if handle.read_line(&mut input)? == 0 {
+                    break;
+                }
                 let args: Vec<&str> = input.split_ascii_whitespace().collect();
                 match parse_txn_args(args) {
                     TxnArgs::Get(k) => {
@@ -123,12 +132,13 @@ fn main() -> Result<()> {
                         exit(0);
                     }
                     TxnArgs::Unknown => {
-                        println!("Unknown args");
+                        exit(1);
                     }
                 };
             }
         }
     };
+    log::info!("Client exit!");
     Ok(())
 }
 
@@ -147,6 +157,7 @@ fn parse_txn_args(args: Vec<&str>) -> TxnArgs {
     } else if args.len() == 1 && args[0] == "commit" {
         TxnArgs::Commit
     } else {
+        log::error!("Unknown args {:?}", args);
         TxnArgs::Unknown
     }
 }
