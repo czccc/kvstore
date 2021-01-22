@@ -90,12 +90,16 @@ fn process_request<E: KvsBackend>(
             loop {
                 let range = generate_range(&req.key, "lock", Some(0), Some(req.ts));
                 let lock = store.range_last(range).unwrap();
-                if let Some((k, v)) = lock {
+                if let Some((_, v)) = lock {
+                    // Found previous lock. Wait for back_off_maybe_clean_up_lock
                     // info!("Get previous Lock in Key: {:?}, Lock: {:?}", k, v);
+                    let primary_ts: u64 = v.split_terminator("-").last().unwrap().parse().unwrap();
+                    let primary_key = v.split_terminator("-").take(1).next().unwrap();
                     back_off_maybe_clean_up_lock(
                         store.clone(),
-                        k.to_owned(),
-                        v.to_owned(),
+                        req.key.to_owned(),
+                        primary_key.to_owned(),
+                        primary_ts,
                         pending_lock.clone(),
                         req.ts,
                     );
@@ -105,12 +109,14 @@ fn process_request<E: KvsBackend>(
                 let range = generate_range(&req.key, "write", Some(0), Some(req.ts));
                 let last_write = store.range_last(range).unwrap();
                 if last_write.is_none() {
+                    // Not found previous write
                     return Response {
                         status: "ok".to_string(),
                         result: Some("Key not found".to_string()),
                     };
                 }
                 if let Ok(data_ts) = last_write.unwrap().1.parse() {
+                    // Found previous write in data_ts, read it and return.
                     let range = generate_range(&req.key, "data", Some(data_ts), Some(data_ts));
                     let (_, value) = store.range_last(range).unwrap().unwrap();
                     return Response {
@@ -142,14 +148,13 @@ fn process_request<E: KvsBackend>(
             },
         },
         "PreWrite" => {
-            // let is_set = req.value.is_some();
             let key = req.key.as_ref();
             let read_range = generate_range(key, "write", Some(req.ts), None);
             match store.range_last(read_range) {
                 Ok(Some(_)) => {
                     return Response {
                         status: "err".to_string(),
-                        result: Some("Abort on writes after our start timestamp".to_string()),
+                        result: Some("Abort on writes after txn start timestamp".to_string()),
                     }
                 }
                 Ok(None) => {}
@@ -304,8 +309,6 @@ fn generate_range(
     start: Option<u64>,
     end: Option<u64>,
 ) -> impl RangeBounds<String> {
-    // key + "-" + col + &ts.to_string()
-
     let key_start_inclusive = start.map_or(Included(generate_key(key, col, u64::MIN)), |v| {
         Included(generate_key(key, col, v))
     });
@@ -319,42 +322,37 @@ fn back_off_maybe_clean_up_lock<E: KvsBackend>(
     store: E,
     key: String,
     primary_key: String,
+    primary_ts: u64,
     pending_lock: Arc<Mutex<HashMap<String, Instant>>>,
     ts: u64,
 ) {
     const TTL: u64 = Duration::from_millis(1000).as_nanos() as u64;
-    let primary_ts: u64 = primary_key
-        .split_terminator("-")
-        .last()
-        .unwrap()
-        .parse()
-        .unwrap();
-    let primary_key_origin = primary_key.split_terminator("-").take(1).next().unwrap();
-    let key_origin = key.split_terminator("-").take(1).next().unwrap();
-    if !pending_lock.lock().unwrap().contains_key(&primary_key) {
-        info!("Pending Add Key: {:?}", primary_key);
-        pending_lock
-            .lock()
-            .unwrap()
-            .insert(primary_key, Instant::now());
+    let mut pending_lock = pending_lock.lock().unwrap();
+    let primary_lock_key = generate_key(&primary_key, "lock", primary_ts);
+    if !pending_lock.contains_key(&primary_lock_key) {
+        // No primary lock in pending, add it and wait TTL
+        info!("Pending Add Key: {:?}", primary_lock_key);
+        pending_lock.insert(primary_lock_key, Instant::now());
     } else {
         let last_instant = pending_lock
-            .lock()
-            .unwrap()
-            .get(&primary_key)
+            .get(&primary_lock_key)
             .map(|v| v.to_owned())
             .unwrap();
         if last_instant.elapsed().as_nanos() as u64 >= TTL {
-            let range = generate_range(primary_key_origin, "lock", Some(0), Some(ts));
+            // TTL is elapsed. Check primary lock is cleaned up or not
+            let range = generate_range(&primary_key, "lock", Some(0), Some(ts));
             let lock = store.range_last(range).unwrap();
             if lock.is_some() {
-                info!("Pending Remove Key: {:?} and Roll back", primary_key);
-                pending_lock.lock().unwrap().remove(&primary_key);
-                let _ = store.remove(primary_key);
+                // primary lock haven't been cleaned.
+                // But TTL is elapsed. So clean this primary lock
+                info!("Pending Remove Key: {:?} and Roll back", primary_lock_key);
+                pending_lock.remove(&primary_lock_key);
+                let _ = store.remove(primary_lock_key);
             } else {
-                let write_range =
-                    generate_range(primary_key_origin, "write", Some(primary_ts), None);
-                if let Some((primary_commit_ts, primary_start_ts)) =
+                // primary lock have been cleaned.
+                // Check it is committed or not in write column
+                let write_range = generate_range(&primary_key, "write", Some(primary_ts), None);
+                if let Some((primary_commit_ts, _)) =
                     store.range_last(write_range).unwrap().map(|(k, v)| {
                         (
                             k.split_terminator("-")
@@ -366,22 +364,22 @@ fn back_off_maybe_clean_up_lock<E: KvsBackend>(
                         )
                     })
                 {
-                    pending_lock.lock().unwrap().remove(&primary_key);
-                    let _ = store.set(
-                        generate_key(&key_origin, "write", primary_commit_ts),
-                        primary_start_ts.to_string(),
-                    );
-                    let _ = store.remove(key.to_string());
+                    // Find write. So Roll Forward to commit this key and remove its lock
                     info!(
-                        "Pending Remove Key: {:?} and Roll forward, set {}: {}",
-                        primary_key,
-                        generate_key(&key_origin, "write", primary_commit_ts),
-                        primary_start_ts
+                        "Pending Remove Key: {:?} and Roll forward",
+                        primary_lock_key
                     );
+                    pending_lock.remove(&primary_lock_key);
+                    let _ = store.set(
+                        generate_key(&key, "write", primary_commit_ts),
+                        primary_ts.to_string(),
+                    );
+                    let _ = store.remove(generate_key(&key, "lock", primary_ts));
                 } else {
+                    // No write. So clean this lock
                     info!("Pending Remove Key: {:?} and Roll back", key);
-                    let _ = store.remove(key);
-                    // pending_lock.lock().unwrap().remove(&primary_key);
+                    let _ = store.remove(generate_key(&key, "lock", primary_ts));
+                    pending_lock.remove(&primary_lock_key);
                 }
             }
         }
