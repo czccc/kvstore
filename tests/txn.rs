@@ -49,11 +49,22 @@ impl ClientWrapper {
         let stdin = child.stdin.take().expect("Unable get stdin");
         let writer = BufWriter::new(stdin);
 
-        ClientWrapper {
+        let mut client = ClientWrapper {
             child,
             reader,
             writer,
-        }
+        };
+        client.begin();
+        client
+    }
+    fn begin(&mut self) {
+        let buf = format!("begin\n");
+        self.writer.write(buf.as_bytes()).expect("Writer error");
+        self.writer.flush().expect("Writer error");
+
+        let mut reader_buf = String::new();
+        self.reader.read_line(&mut reader_buf).unwrap();
+        assert_eq!("Transaction Started", reader_buf.trim());
     }
     fn set(&mut self, key: &str, value: &str) {
         let buf = format!("set {} {}\n", key, value);
@@ -78,6 +89,12 @@ impl ClientWrapper {
         self.reader.read_line(&mut reader_buf).unwrap();
         assert_eq!(expected, reader_buf.trim());
 
+        self.exit();
+    }
+    fn exit(&mut self) {
+        let buf = format!("exit\n");
+        self.writer.write(buf.as_bytes()).expect("Writer error");
+        self.writer.flush().expect("Writer error");
         self.child.wait().expect("command wasn't running");
     }
 }

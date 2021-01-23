@@ -104,7 +104,6 @@ fn main() -> Result<()> {
         }
         Command::Txn { addr } => {
             let mut client = KvsClient::new(addr);
-            client.txn_start()?;
 
             let stdin = io::stdin();
             let mut handle = stdin.lock();
@@ -116,19 +115,39 @@ fn main() -> Result<()> {
                 }
                 let args: Vec<&str> = input.split_ascii_whitespace().collect();
                 match parse_txn_args(args) {
+                    TxnArgs::Begin => match client.txn_begin() {
+                        Ok(_) => println!("Transaction Started"),
+                        Err(_) => println!("Error in starting transaction! Please try again"),
+                    },
                     TxnArgs::Get(k) => {
-                        let value = client.txn_get(k)?;
-                        println!("{}", value);
+                        if !client.txn_is_started() {
+                            println!("No active transaction detected! Use `begin` first");
+                            continue;
+                        }
+                        match client.txn_get(k) {
+                            Ok(value) => println!("{}", value),
+                            Err(e) => println!("Error: {}", e),
+                        }
                     }
                     TxnArgs::Set(k, v) => {
-                        client.txn_set(k, v)?;
+                        if !client.txn_is_started() {
+                            println!("No active transaction detected! Use `begin` first");
+                            continue;
+                        }
+                        client.txn_set(k, v);
                     }
                     TxnArgs::Commit => {
-                        if client.txn_commit()? {
-                            println!("Transaction Success");
-                        } else {
-                            println!("Transaction Failed");
+                        if !client.txn_is_started() {
+                            println!("No active transaction detected! Use `begin` first!");
+                            continue;
                         }
+                        match client.txn_commit() {
+                            Ok(true) => println!("Transaction Success"),
+                            Ok(false) => println!("Transaction Failed"),
+                            Err(e) => println!("Error: {}", e),
+                        }
+                    }
+                    TxnArgs::Exit => {
                         exit(0);
                     }
                     TxnArgs::Unknown => {
@@ -143,9 +162,11 @@ fn main() -> Result<()> {
 }
 
 enum TxnArgs {
+    Begin,
     Get(String),
     Set(String, String),
     Commit,
+    Exit,
     Unknown,
 }
 
@@ -156,8 +177,17 @@ fn parse_txn_args(args: Vec<&str>) -> TxnArgs {
         TxnArgs::Set(args[1].to_string(), args[2].to_string())
     } else if args.len() == 1 && args[0] == "commit" {
         TxnArgs::Commit
+    } else if args.len() == 1 && args[0] == "begin" {
+        TxnArgs::Begin
+    } else if args.len() == 1 && args[0] == "exit" {
+        TxnArgs::Exit
     } else {
-        log::warn!("Unknown args {:?}", args);
+        eprintln!("Unknown args! Avaliale: begin get set commit exit");
+        eprintln!("    begin");
+        eprintln!("    get <key>");
+        eprintln!("    set <key> <value>");
+        eprintln!("    commit");
+        eprintln!("    exit");
         TxnArgs::Unknown
     }
 }
