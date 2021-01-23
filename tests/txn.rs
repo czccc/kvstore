@@ -17,6 +17,7 @@ fn open_server(engine: &str, addr: &str, temp_dir: &TempDir) -> (SyncSender<()>,
     let mut child = Command::cargo_bin("kvs-server")
         .unwrap()
         .args(&["--engine", engine, "--addr", addr])
+        .env("RUST_LOG", "warn")
         .current_dir(temp_dir)
         .spawn()
         .unwrap();
@@ -38,8 +39,10 @@ impl ClientWrapper {
         let mut child = Command::cargo_bin("kvs-client")
             .unwrap()
             .args(&["txn", "--addr", addr])
+            .env("RUST_LOG", "warn")
             .stdout(Stdio::piped())
             .stdin(Stdio::piped())
+            .stderr(Stdio::null())
             .spawn()
             .unwrap();
         thread::sleep(Duration::from_secs(1));
