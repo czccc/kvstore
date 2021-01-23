@@ -80,6 +80,7 @@ impl KvsClient {
     pub fn txn_begin(&mut self) -> Result<()> {
         self.start_ts = self.get_ts()?;
         self.is_started = true;
+        self.writes.clear();
         info!("[Client {}] - Start txn", self.start_ts);
         Ok(())
     }

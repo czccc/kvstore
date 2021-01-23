@@ -151,7 +151,7 @@ fn main() -> Result<()> {
                         exit(0);
                     }
                     TxnArgs::Unknown => {
-                        exit(1);
+                        // exit(1);
                     }
                 };
             }
