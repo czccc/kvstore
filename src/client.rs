@@ -9,6 +9,7 @@ pub struct KvsClient {
     addr: SocketAddr,
     writes: Vec<(String, String)>,
     start_ts: u64,
+    is_started: bool,
 }
 
 impl KvsClient {
@@ -18,20 +19,21 @@ impl KvsClient {
             addr,
             writes: Vec::new(),
             start_ts: 0,
+            is_started: false,
         }
     }
     /// Single set command used in a transaction.
     /// Return whether transaction success or not.
     pub fn set(&mut self, key: String, value: String) -> Result<bool> {
-        self.txn_start()?;
-        self.txn_set(key, value)?;
+        self.txn_begin()?;
+        self.txn_set(key, value);
         self.txn_commit()
     }
     /// Single get command used in a transaction
     /// Return the value of given key,
     /// or "Key not found" when key is not in KvsServer or value is empty.
     pub fn get(&mut self, key: String) -> Result<String> {
-        self.txn_start()?;
+        self.txn_begin()?;
         let value = self.txn_get(key);
         self.txn_commit()?;
         value
@@ -47,8 +49,8 @@ impl KvsClient {
         if value == "" || value == "Key not found" {
             Err(KvError::KeyNotFound)
         } else {
-            self.txn_start()?;
-            self.txn_set(key, String::new())?;
+            self.txn_begin()?;
+            self.txn_set(key, String::new());
             self.txn_commit()
         }
     }
@@ -69,9 +71,16 @@ impl KvsClient {
 }
 
 impl KvsClient {
+    /// Determined whether the txn is started or not
+    pub fn txn_is_started(&mut self) -> bool {
+        self.is_started
+    }
+
     /// Start a transaction with acquire a timestamp from KvsServer
-    pub fn txn_start(&mut self) -> Result<()> {
+    pub fn txn_begin(&mut self) -> Result<()> {
         self.start_ts = self.get_ts()?;
+        self.is_started = true;
+        self.writes.clear();
         info!("[Client {}] - Start txn", self.start_ts);
         Ok(())
     }
@@ -119,13 +128,12 @@ impl KvsClient {
 
     /// Set a value of given key in transaction,
     /// for now, it just push this operation into a queue.
-    pub fn txn_set(&mut self, key: String, value: String) -> Result<()> {
+    pub fn txn_set(&mut self, key: String, value: String) {
         info!(
             "[Client {}] - set key: {} value: {}",
             self.start_ts, key, value
         );
         self.writes.push((key, value));
-        Ok(())
     }
 
     /// Commit current transaction. Use Percolator as commit method
@@ -211,6 +219,7 @@ impl KvsClient {
                 _ => {}
             };
         }
+        self.is_started = false;
         Ok(true)
     }
 }

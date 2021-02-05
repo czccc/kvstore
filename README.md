@@ -6,7 +6,7 @@ This project is followed with [Talent Plan](https://github.com/pingcap/talent-pl
 
 - Writen with pure Rust
 - Support command:
-    - **Put**: add a Key/Value pairs into storage 
+    - **Set**: add a Key/Value pairs into storage 
     - **Get**: get the value with given key
     - **Remove**: remove Key/Value pairs from storage
 - Backend storage engine:
@@ -19,6 +19,14 @@ This project is followed with [Talent Plan](https://github.com/pingcap/talent-pl
 - Support network query
     - `KvsServer`: a server listen on specified socket and process requests from client
     - `KvsClient`: a client connect to socket and send request to server
+- Support `Percolator` transaction:
+    - `KvsClient`: use `txn` to enter transaction interact
+    - Previous `set`, `get`, `remove` are changed to a transaction with single operation
+    - `begin`: start a transaction with query a new timestamp `ts`
+    - `get <key>`: get a value of specified key within `ts`
+    - `set <key> <value>`: push a set operation into a queue and wait to commit
+    - `commit`: Prewrite all set operation and commit those if no comflict
+    - `exit`: exit the transaction interact
 - Benchmark:
     - Engine benches of `KvStore` and `KvSled`
     - Thread pool benches of `NaiveThreadPool`, `SharedQueueThreadPool` and `RayonThreadPool`

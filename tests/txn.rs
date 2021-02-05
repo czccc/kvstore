@@ -17,6 +17,7 @@ fn open_server(engine: &str, addr: &str, temp_dir: &TempDir) -> (SyncSender<()>,
     let mut child = Command::cargo_bin("kvs-server")
         .unwrap()
         .args(&["--engine", engine, "--addr", addr])
+        .env("RUST_LOG", "warn")
         .current_dir(temp_dir)
         .spawn()
         .unwrap();
@@ -38,8 +39,10 @@ impl ClientWrapper {
         let mut child = Command::cargo_bin("kvs-client")
             .unwrap()
             .args(&["txn", "--addr", addr])
+            .env("RUST_LOG", "warn")
             .stdout(Stdio::piped())
             .stdin(Stdio::piped())
+            .stderr(Stdio::null())
             .spawn()
             .unwrap();
         thread::sleep(Duration::from_secs(1));
@@ -49,11 +52,22 @@ impl ClientWrapper {
         let stdin = child.stdin.take().expect("Unable get stdin");
         let writer = BufWriter::new(stdin);
 
-        ClientWrapper {
+        let mut client = ClientWrapper {
             child,
             reader,
             writer,
-        }
+        };
+        client.begin();
+        client
+    }
+    fn begin(&mut self) {
+        let buf = format!("begin\n");
+        self.writer.write(buf.as_bytes()).expect("Writer error");
+        self.writer.flush().expect("Writer error");
+
+        let mut reader_buf = String::new();
+        self.reader.read_line(&mut reader_buf).unwrap();
+        assert_eq!("Transaction Started", reader_buf.trim());
     }
     fn set(&mut self, key: &str, value: &str) {
         let buf = format!("set {} {}\n", key, value);
@@ -78,6 +92,12 @@ impl ClientWrapper {
         self.reader.read_line(&mut reader_buf).unwrap();
         assert_eq!(expected, reader_buf.trim());
 
+        self.exit();
+    }
+    fn exit(&mut self) {
+        let buf = format!("exit\n");
+        self.writer.write(buf.as_bytes()).expect("Writer error");
+        self.writer.flush().expect("Writer error");
         self.child.wait().expect("command wasn't running");
     }
 }
@@ -589,6 +609,45 @@ fn client_cli_txn_commit_primary_fail() {
         client0.set("key2", "200");
         client0.set("key3", "300");
         client0.commit("Transaction Failed");
+
+        let mut client1 = ClientWrapper::new(addr);
+
+        client1.get("key1", "Key not found");
+        client1.get("key2", "Key not found");
+        client1.get("key3", "Key not found");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+    }
+}
+
+#[test]
+fn client_cli_txn_server_crash() {
+    let server_addr = "127.0.0.1:4020";
+    let addr = "127.0.0.1:4021";
+    let proxy = Proxy {
+        addr: addr.to_string(),
+        server_addr: server_addr.to_string(),
+        drop_req: true,
+        drop_resp: false,
+        fail_primary: true,
+    };
+    let _proxy_handle = proxy_hook(proxy);
+    thread::sleep(Duration::from_secs(1));
+
+    for engine in vec!["kvs", "sled"] {
+        let temp_dir = TempDir::new().unwrap();
+        let (sender, handle) = open_server(engine, server_addr, &temp_dir);
+
+        let mut client0 = ClientWrapper::new(addr);
+        client0.set("key1", "100");
+        client0.set("key2", "200");
+        client0.set("key3", "300");
+        client0.commit("Transaction Failed");
+
+        sender.send(()).unwrap();
+        handle.join().unwrap();
+        let (sender, handle) = open_server(engine, server_addr, &temp_dir);
 
         let mut client1 = ClientWrapper::new(addr);
 
