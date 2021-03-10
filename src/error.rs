@@ -21,6 +21,9 @@ pub enum KvError {
     #[error("{0}")]
     StringError(String),
     /// Unknown Error
+    #[error("Not Leader")]
+    NotLeader,
+    /// Unknown Error
     #[error("Unknown Error")]
     Unknown,
 }

@@ -1,8 +1,8 @@
 // #![deny(missing_docs)]
 //! A key-value store system
 
-// #[macro_use]
-// extern crate log;
+#[macro_use]
+extern crate log;
 
 mod backend;
 mod client;
@@ -27,7 +27,7 @@ pub use server::{KvsServer, KvsServerBuilder};
 pub mod preclude {
     pub use crate::backend::{EngineKind, KvSled, KvStore, KvsEngine};
     pub use crate::client::KvsClient;
-    pub use crate::common::{Request, Response};
+    // pub use crate::common::{Request, Response};
     pub use crate::error::{KvError, Result};
     pub use crate::rpc::kvs_service::*;
     pub use crate::rpc::raft_service::*;
