@@ -1,4 +1,4 @@
-use kvs::{KvsClient, Result};
+use kvs::preclude::*;
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, process::exit};
 use structopt::StructOpt;
@@ -59,13 +59,17 @@ enum Command {
     },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let opt: Opt = Opt::from_args();
     match opt.cmd {
         Command::Get { key, addr } => {
-            let mut client = KvsClient::new(addr);
-            match client.get(key) {
-                Ok(result) => println!("{}", result),
+            let addr = format!("{}{}", "http://", addr.to_string());
+            let mut client = KvRpcClient::connect(addr).await.unwrap();
+            let request = tonic::Request::new(GetRequest { key });
+            let response = client.get(request).await;
+            match response {
+                Ok(result) => println!("{}", result.into_inner().message),
                 Err(e) => {
                     eprintln!("{}", e);
                     exit(1);
@@ -73,17 +77,29 @@ fn main() -> Result<()> {
             }
         }
         Command::Set { key, value, addr } => {
-            let mut client = KvsClient::new(addr);
-            if let Err(e) = client.set(key, value) {
-                eprintln!("{}", e);
-                exit(1);
+            let addr = format!("{}{}", "http://", addr.to_string());
+            let mut client = KvRpcClient::connect(addr).await.unwrap();
+            let request = tonic::Request::new(SetRequest { key, value });
+            let response = client.set(request).await;
+            match response {
+                Ok(_result) => {}
+                Err(e) => {
+                    eprintln!("{}", e);
+                    exit(1);
+                }
             }
         }
         Command::Rm { key, addr } => {
-            let mut client = KvsClient::new(addr);
-            if let Err(e) = client.remove(key) {
-                eprintln!("{}", e);
-                exit(1);
+            let addr = format!("{}{}", "http://", addr.to_string());
+            let mut client = KvRpcClient::connect(addr).await.unwrap();
+            let request = tonic::Request::new(RemoveRequest { key });
+            let response = client.remove(request).await;
+            match response {
+                Ok(_result) => {}
+                Err(e) => {
+                    eprintln!("{}", e);
+                    exit(1);
+                }
             }
         }
     };

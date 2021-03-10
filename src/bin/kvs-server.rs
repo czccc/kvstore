@@ -1,7 +1,6 @@
 #[macro_use]
 extern crate log;
 
-use kvs::*;
 // use serde::{Deserialize, Serialize};
 use std::{env::current_dir, fs, io::Write, net::SocketAddr};
 use structopt::StructOpt;
@@ -9,6 +8,9 @@ use structopt::StructOpt;
 const DEFAULT_ADDR: &str = "127.0.0.1:4000";
 /// Default Engine tag file
 const ENGINE_TAG_FILE: &str = ".engine";
+
+use kvs::preclude::*;
+use tonic::transport::Server;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -76,7 +78,8 @@ fn write_engine_to_dir(engine: &String) -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let opt: Opt = Opt::from_args();
@@ -88,14 +91,22 @@ fn main() -> Result<()> {
     info!("  Engine  : {}", opt.engine);
     info!("  TdPool  : {}", opt.thread_pool);
 
-    let mut server = KvsServerBuilder::new()
+    let addr = opt.addr;
+
+    let server = KvsServerBuilder::new()
         .engine(opt.engine)
         .path(current_dir().unwrap())
         .thread_pool(opt.thread_pool)
         .num_threads(num_cpus::get())
         .build()?;
 
-    server.run(opt.addr)?;
+    // let server = KvRpcServer::new(server);
+    // server.run(opt.addr)?;
+    Server::builder()
+        .add_service(KvRpcServer::new(server))
+        .serve(addr)
+        .await
+        .map_err(|e| KvError::StringError(e.to_string()))?;
 
     Ok(())
 }
