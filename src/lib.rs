@@ -30,5 +30,6 @@ pub mod preclude {
     pub use crate::common::{Request, Response};
     pub use crate::error::{KvError, Result};
     pub use crate::rpc::kvs_service::*;
+    pub use crate::rpc::raft_service::*;
     pub use crate::server::{KvsServer, KvsServerBuilder};
 }
