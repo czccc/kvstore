@@ -23,14 +23,28 @@ pub use self::rayon::RayonThreadPool;
 pub use naive::NaiveThreadPool;
 pub use shared_queue::SharedQueueThreadPool;
 
-/// Thread Pool Type
+/// Thread Pool Kind
 #[allow(non_camel_case_types)]
 #[derive(Debug)]
-pub enum ThreadPoolType {
+pub enum ThreadPoolKind {
     /// NaiveThreadPool
-    NaiveThreadPool,
+    Naive(NaiveThreadPool),
     /// SharedQueueThreadPool
-    SharedQueueThreadPool,
+    SharedQueue(SharedQueueThreadPool),
     /// RayonThreadPool
-    RayonThreadPool,
+    Rayon(RayonThreadPool),
+}
+
+impl ThreadPoolKind {
+    /// spawn
+    pub fn spawn<F>(&self, job: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        match self {
+            ThreadPoolKind::Naive(inner) => inner.spawn(job),
+            ThreadPoolKind::SharedQueue(inner) => inner.spawn(job),
+            ThreadPoolKind::Rayon(inner) => inner.spawn(job),
+        }
+    }
 }

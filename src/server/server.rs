@@ -1,5 +1,7 @@
-use crate::thread_pool::*;
+// use crate::rpc::KvStoreService;
 use crate::*;
+use crate::{backend::EngineKind, thread_pool::*};
+// use futures::future::Ready;
 use std::{
     io::Write,
     io::{prelude::*, BufReader, BufWriter},
@@ -8,16 +10,24 @@ use std::{
     str::from_utf8,
 };
 
+// use tonic::{transport::Server, Request, Response, Status};
+
+// pub mod kvs_server_service {
+//     tonic::include_proto!("kvserver");
+// }
+// use kvs_server_service::kv_server_server::{KvServer, KvServerServer};
+// use kvs_server_service::{GetReply, GetRequest, RemoveReply, RemoveRequest, SetReply, SetRequest};
+
 /// Kvs Server
-pub struct KvsServer<E: KvsEngine, P: ThreadPool> {
-    store: E,
-    thread_pool: P,
+pub struct KvsServer {
+    store: EngineKind,
+    thread_pool: ThreadPoolKind,
 }
 
-impl<E: KvsEngine, P: ThreadPool> KvsServer<E, P> {
+impl KvsServer {
     /// Construct a new Kvs Server from given engine at specific path.
     /// Use `run()` to listen on given addr.
-    pub fn new(store: E, thread_pool: P) -> Result<Self> {
+    pub fn new(store: EngineKind, thread_pool: ThreadPoolKind) -> Result<Self> {
         Ok(KvsServer { store, thread_pool })
     }
     /// Run Kvs Server at given Addr
@@ -42,7 +52,7 @@ impl<E: KvsEngine, P: ThreadPool> KvsServer<E, P> {
     }
 }
 
-fn handle_request<E: KvsEngine>(store: E, stream: TcpStream) -> Result<()> {
+fn handle_request(store: EngineKind, stream: TcpStream) -> Result<()> {
     let mut reader = BufReader::new(&stream);
     let mut writer = BufWriter::new(&stream);
 
@@ -67,7 +77,7 @@ fn handle_request<E: KvsEngine>(store: E, stream: TcpStream) -> Result<()> {
     Ok(())
 }
 
-fn process_request<E: KvsEngine>(store: E, req: Request) -> Response {
+fn process_request(store: EngineKind, req: Request) -> Response {
     match req.cmd.as_str() {
         "Get" => match store.get(req.key) {
             Ok(Some(value)) => Response {
@@ -109,3 +119,5 @@ fn process_request<E: KvsEngine>(store: E, req: Request) -> Response {
         },
     }
 }
+
+// impl<E: KvsEngine, P: ThreadPool> KvServer for KvsServer<E, P> {}

@@ -3,6 +3,7 @@ use std::thread;
 use crate::thread_pool::ThreadPool;
 
 /// NaiveThreadPool
+#[derive(Debug)]
 pub struct NaiveThreadPool {}
 
 impl ThreadPool for NaiveThreadPool {

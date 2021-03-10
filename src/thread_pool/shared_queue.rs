@@ -3,6 +3,7 @@ use crossbeam::channel::{unbounded, Receiver, Sender};
 use std::thread;
 
 /// ShareQueueThreadPool
+#[derive(Debug)]
 pub struct SharedQueueThreadPool {
     sender: Sender<ThreadPoolMessage>,
 }

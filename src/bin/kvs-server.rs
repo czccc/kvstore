@@ -1,13 +1,14 @@
 #[macro_use]
 extern crate log;
 
-use kvs::thread_pool::*;
 use kvs::*;
 // use serde::{Deserialize, Serialize};
-use std::{env::current_dir, fs, io::Write, net::SocketAddr, str::FromStr};
+use std::{env::current_dir, fs, io::Write, net::SocketAddr};
 use structopt::StructOpt;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4000";
+/// Default Engine tag file
+const ENGINE_TAG_FILE: &str = ".engine";
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -28,10 +29,10 @@ struct Opt {
         name = "ENGINE-NAME",
         short = "e",
         long = "engine",
-        default_value = "Auto",
+        default_value = "auto",
         parse(try_from_str = parse_str_to_engine)
     )]
-    engine: Engine,
+    engine: String,
     #[structopt(
         name = "THREADPOOL-NAME",
         short = "t",
@@ -39,41 +40,38 @@ struct Opt {
         default_value = "rayon",
         parse(try_from_str = parse_str_to_pool)
     )]
-    threadpool: ThreadPoolType,
+    thread_pool: String,
 }
 
-fn parse_str_to_engine(src: &str) -> Result<Engine> {
+fn parse_str_to_engine(src: &str) -> Result<String> {
     let previous = fs::read_to_string(ENGINE_TAG_FILE);
-    if src == "Auto" {
-        Ok(Engine::from_str(&previous.unwrap_or("kvs".to_string()))?)
+    if src == "auto" {
+        Ok(previous.unwrap_or("kvs".to_string()))
     } else if previous.is_err() || src == previous.unwrap() {
-        Ok(Engine::from_str(src)?)
+        Ok(src.to_string())
     } else {
         Err(KvError::ParserError(src.to_string()))
     }
 }
 
-fn parse_str_to_pool(src: &str) -> Result<ThreadPoolType> {
+fn parse_str_to_pool(src: &str) -> Result<String> {
     if src == "rayon" {
-        Ok(ThreadPoolType::RayonThreadPool)
+        Ok(src.to_string())
     } else if src == "share" {
-        Ok(ThreadPoolType::SharedQueueThreadPool)
+        Ok(src.to_string())
     } else if src == "naive" {
-        Ok(ThreadPoolType::NaiveThreadPool)
+        Ok(src.to_string())
     } else {
         Err(KvError::ParserError(src.to_string()))
     }
 }
 
-fn write_engine_to_dir(engine: &Engine) -> Result<()> {
+fn write_engine_to_dir(engine: &String) -> Result<()> {
     let mut engine_tag_file = fs::OpenOptions::new()
         .create(true)
         .write(true)
         .open(ENGINE_TAG_FILE)?;
-    match engine {
-        Engine::kvs => engine_tag_file.write(b"kvs")?,
-        Engine::sled => engine_tag_file.write(b"sled")?,
-    };
+    engine_tag_file.write(engine.as_bytes())?;
     engine_tag_file.flush()?;
     Ok(())
 }
@@ -87,57 +85,17 @@ fn main() -> Result<()> {
     info!("Key Value Store Server");
     info!("  Version : {}", env!("CARGO_PKG_VERSION"));
     info!("  IP-PORT : {}", opt.addr);
-    info!("  Engine  : {:?}", opt.engine);
-    info!("  TdPool  : {:?}", opt.threadpool);
+    info!("  Engine  : {}", opt.engine);
+    info!("  TdPool  : {}", opt.thread_pool);
 
-    match opt.engine {
-        Engine::kvs => match opt.threadpool {
-            ThreadPoolType::NaiveThreadPool => {
-                let cpus = num_cpus::get();
-                let thread_pool = NaiveThreadPool::new(cpus as u32)?;
-                let mut server =
-                    KvsServer::new(KvStore::open(current_dir().unwrap())?, thread_pool)?;
-                server.run(opt.addr)?;
-            }
-            ThreadPoolType::SharedQueueThreadPool => {
-                let cpus = num_cpus::get();
-                let thread_pool = SharedQueueThreadPool::new(cpus as u32)?;
-                let mut server =
-                    KvsServer::new(KvStore::open(current_dir().unwrap())?, thread_pool)?;
-                server.run(opt.addr)?;
-            }
-            ThreadPoolType::RayonThreadPool => {
-                let cpus = num_cpus::get();
-                let thread_pool = RayonThreadPool::new(cpus as u32)?;
-                let mut server =
-                    KvsServer::new(KvStore::open(current_dir().unwrap())?, thread_pool)?;
-                server.run(opt.addr)?;
-            }
-        },
-        Engine::sled => match opt.threadpool {
-            ThreadPoolType::NaiveThreadPool => {
-                let cpus = num_cpus::get();
-                let thread_pool = NaiveThreadPool::new(cpus as u32)?;
-                let mut server =
-                    KvsServer::new(KvSled::open(current_dir().unwrap())?, thread_pool)?;
-                server.run(opt.addr)?;
-            }
-            ThreadPoolType::SharedQueueThreadPool => {
-                let cpus = num_cpus::get();
-                let thread_pool = SharedQueueThreadPool::new(cpus as u32)?;
-                let mut server =
-                    KvsServer::new(KvSled::open(current_dir().unwrap())?, thread_pool)?;
-                server.run(opt.addr)?;
-            }
-            ThreadPoolType::RayonThreadPool => {
-                let cpus = num_cpus::get();
-                let thread_pool = RayonThreadPool::new(cpus as u32)?;
-                let mut server =
-                    KvsServer::new(KvSled::open(current_dir().unwrap())?, thread_pool)?;
-                server.run(opt.addr)?;
-            }
-        },
-    }
+    let mut server = KvsServerBuilder::new()
+        .engine(opt.engine)
+        .path(current_dir().unwrap())
+        .thread_pool(opt.thread_pool)
+        .num_threads(num_cpus::get())
+        .build()?;
+
+    server.run(opt.addr)?;
 
     Ok(())
 }

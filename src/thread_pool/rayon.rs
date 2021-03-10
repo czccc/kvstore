@@ -1,6 +1,7 @@
 use crate::thread_pool::ThreadPool;
 
 /// RayonThreadPool
+#[derive(Debug)]
 pub struct RayonThreadPool {
     rayon: rayon::ThreadPool,
 }

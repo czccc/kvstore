@@ -1,5 +1,4 @@
-use crate::{KvError, Result};
-use std::str::FromStr;
+use crate::Result;
 
 pub use kvsled::KvSled;
 pub use kvstore::KvStore;
@@ -26,37 +25,36 @@ pub trait KvsEngine: Clone + Send + 'static {
     fn remove(&self, key: String) -> Result<()>;
 }
 
-/// Backend Engine
+/// kind
 #[allow(non_camel_case_types)]
-#[derive(Debug)]
-pub enum Engine {
-    /// Use log-structure engine
-    kvs,
-    /// Use sled engine
-    sled,
+#[derive(Debug, Clone)]
+pub enum EngineKind {
+    /// kvs
+    kvs(KvStore),
+    /// sled
+    sled(KvSled),
 }
 
-// impl Engine {
-//     /// Open a backend Engine in given path
-//     pub fn open<E: KvsEngine>(engine: Engine, path: impl Into<PathBuf>) -> Result<E> {
-//         match engine {
-//             Engine::kvs => Ok(KvStore::open(path.into())?),
-//             // Engine::kvs => Ok(Box::new(KvStore::open(path.into())?)),
-//             Engine::sled => Ok(Box::new(KvSled::open(path.into())?)),
-//         }
-//     }
-// }
-
-impl FromStr for Engine {
-    type Err = KvError;
-
-    fn from_str(s: &str) -> Result<Self> {
-        if s == "kvs" {
-            Ok(Engine::kvs)
-        } else if s == "sled" {
-            Ok(Engine::sled)
-        } else {
-            Err(KvError::ParserError(s.to_string()))
+impl EngineKind {
+    /// a
+    pub fn set(&self, key: String, value: String) -> Result<()> {
+        match self {
+            EngineKind::kvs(store) => store.set(key, value),
+            EngineKind::sled(store) => store.set(key, value),
+        }
+    }
+    /// a
+    pub fn get(&self, key: String) -> Result<Option<String>> {
+        match self {
+            EngineKind::kvs(store) => store.get(key),
+            EngineKind::sled(store) => store.get(key),
+        }
+    }
+    /// a
+    pub fn remove(&self, key: String) -> Result<()> {
+        match self {
+            EngineKind::kvs(store) => store.remove(key),
+            EngineKind::sled(store) => store.remove(key),
         }
     }
 }
