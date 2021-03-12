@@ -11,14 +11,43 @@ service KvRpc {
 message SetRequest {
   string key = 1;
   string value = 2;
+  string name = 3;
+  uint64 seq = 4;
 }
 
-message SetReply { string message = 1; }
+message SetReply {
+  string message = 1;
+  string name = 2;
+  uint64 seq = 3;
+}
 
-message GetRequest { string key = 1; }
+message GetRequest {
+  string key = 1;
+  string name = 2;
+  uint64 seq = 3;
+}
 
-message GetReply { string message = 1; }
+message GetReply {
+  string message = 1;
+  string name = 2;
+  uint64 seq = 3;
+}
 
-message RemoveRequest { string key = 1; }
+message RemoveRequest {
+  string key = 1;
+  string name = 2;
+  uint64 seq = 3;
+}
 
-message RemoveReply { string message = 1; }
+message RemoveReply {
+  string message = 1;
+  string name = 2;
+  uint64 seq = 3;
+}
+
+message Snapshot {
+  repeated string keys = 1;
+  repeated string values = 2;
+  repeated string clients = 3;
+  repeated uint64 seqs = 4;
+}

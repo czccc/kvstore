@@ -96,8 +96,6 @@ async fn main() -> Result<()> {
     let server = KvsServerBuilder::new()
         .engine(opt.engine)
         .path(current_dir().unwrap())
-        .thread_pool(opt.thread_pool)
-        .num_threads(num_cpus::get())
         .build()?;
 
     // let server = KvRpcServer::new(server);

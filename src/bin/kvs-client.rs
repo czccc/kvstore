@@ -64,9 +64,11 @@ async fn main() -> Result<()> {
     let opt: Opt = Opt::from_args();
     match opt.cmd {
         Command::Get { key, addr } => {
+            let name = addr.to_string();
+            let seq = 0;
             let addr = format!("{}{}", "http://", addr.to_string());
             let mut client = KvRpcClient::connect(addr).await.unwrap();
-            let request = tonic::Request::new(GetRequest { key });
+            let request = tonic::Request::new(GetRequest { key, name, seq });
             let response = client.get(request).await;
             match response {
                 Ok(result) => println!("{}", result.into_inner().message),
@@ -77,9 +79,16 @@ async fn main() -> Result<()> {
             }
         }
         Command::Set { key, value, addr } => {
+            let name = addr.to_string();
+            let seq = 0;
             let addr = format!("{}{}", "http://", addr.to_string());
             let mut client = KvRpcClient::connect(addr).await.unwrap();
-            let request = tonic::Request::new(SetRequest { key, value });
+            let request = tonic::Request::new(SetRequest {
+                key,
+                value,
+                name,
+                seq,
+            });
             let response = client.set(request).await;
             match response {
                 Ok(_result) => {}
@@ -90,9 +99,11 @@ async fn main() -> Result<()> {
             }
         }
         Command::Rm { key, addr } => {
+            let name = addr.to_string();
+            let seq = 0;
             let addr = format!("{}{}", "http://", addr.to_string());
             let mut client = KvRpcClient::connect(addr).await.unwrap();
-            let request = tonic::Request::new(RemoveRequest { key });
+            let request = tonic::Request::new(RemoveRequest { key, name, seq });
             let response = client.remove(request).await;
             match response {
                 Ok(_result) => {}

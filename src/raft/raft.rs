@@ -11,18 +11,19 @@ use std::{
     time::Duration,
 };
 
-use futures::{
-    channel::{
-        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-        oneshot::{channel, Receiver, Sender},
-    },
-    prelude::*,
-    Stream,
-};
+use futures::FutureExt;
 use futures_timer::Delay;
 use prost::Message;
 use rand::Rng;
-use tokio::runtime::Builder;
+use tokio::{
+    runtime::Builder,
+    sync::{
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        oneshot::{channel, Receiver, Sender},
+    },
+    time::timeout,
+};
+use tokio_stream::{Stream, StreamExt};
 use tonic::{transport::Channel, Code, Request, Response, Status};
 
 fn election_timeout() -> Duration {
@@ -50,24 +51,6 @@ pub struct ApplyMsg {
     pub command_index: u64,
 }
 
-/// State of a raft peer.
-#[derive(Default, Clone, Debug)]
-pub struct State {
-    pub term: u64,
-    pub is_leader: bool,
-}
-
-impl State {
-    /// The current term of this peer.
-    pub fn term(&self) -> u64 {
-        self.term
-    }
-    /// Whether this peer believes it is the leader.
-    pub fn is_leader(&self) -> bool {
-        self.is_leader
-    }
-}
-
 #[derive(Message, Clone)]
 pub struct Persistent {
     #[prost(uint64, tag = "1")]
@@ -89,18 +72,14 @@ enum RaftRole {
     Leader,
 }
 
-// A single Raft peer.
-pub struct Raft {
+// A single RaftInner peer.
+struct RaftInner {
     // RPC end points of all peers
     peers: Vec<RaftRpcClient<Channel>>,
     // Object to hold this peer's persisted state
     persister: Box<dyn Persister>,
     // this peer's index into peers[]
     me: usize,
-    // state: Arc<State>,
-    // Your data here (2A, 2B, 2C).
-    // Look at the paper's Figure 2 for a description of what
-    // state a Raft server must maintain.
 
     // Persistent state on all servers
     // Updated on stable storage before responding to RPCs
@@ -131,15 +110,12 @@ pub struct Raft {
     // update when persist
     raft_state_size: Arc<AtomicU64>,
 
-    // RaftEvent channel used in RaftExecutor
-    sender: UnboundedSender<RaftEvent>,
-    receiver: UnboundedReceiver<RaftEvent>,
-
     // ApplyMsg channel
+    sender: UnboundedSender<RaftEvent>,
     apply_ch: UnboundedSender<ApplyMsg>,
 }
 
-impl Display for Raft {
+impl Display for RaftInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let role = match self.role {
             RaftRole::Follower => "Follower ",
@@ -162,28 +138,28 @@ impl Display for Raft {
     }
 }
 
-impl Raft {
-    /// the service or tester wants to create a Raft server. the ports
-    /// of all the Raft servers (including this one) are in peers. this
+impl RaftInner {
+    /// the service or tester wants to create a RaftInner server. the ports
+    /// of all the RaftInner servers (including this one) are in peers. this
     /// server's port is peers[me]. all the servers' peers arrays
     /// have the same order. persister is a place for this server to
     /// save its persistent state, and also initially holds the most
     /// recent saved state, if any. apply_ch is a channel on which the
-    /// tester or service expects Raft to send ApplyMsg messages.
+    /// tester or service expects RaftInner to send ApplyMsg messages.
     /// This method must return quickly.
     pub fn new(
         peers: Vec<RaftRpcClient<Channel>>,
         me: usize,
         persister: Box<dyn Persister>,
         apply_ch: UnboundedSender<ApplyMsg>,
-    ) -> Raft {
+        sender: UnboundedSender<RaftEvent>,
+    ) -> RaftInner {
         let raft_state = persister.raft_state();
         let peers_num = peers.len();
 
-        let (sender, receiver) = unbounded();
+        let (sender, receiver) = unbounded_channel();
 
-        // Your initialization code here (2A, 2B, 2C).
-        let mut rf = Raft {
+        let mut rf = RaftInner {
             peers,
             persister,
             me,
@@ -207,7 +183,6 @@ impl Raft {
             match_index: Vec::new(),
 
             sender,
-            receiver,
             apply_ch,
         };
 
@@ -224,17 +199,11 @@ impl Raft {
         rf
     }
 
-    /// save Raft's persistent state to stable storage,
+    /// save RaftInner's persistent state to stable storage,
     /// where it can later be retrieved after a crash and restart.
     /// see paper's Figure 2 for a description of what should be persistent.
     fn persist(&mut self) {
-        // Your code here (2C).
-        // Example:
-        // labcodec::encode(&self.xxx, &mut data).unwrap();
-        // labcodec::encode(&self.yyy, &mut data).unwrap();
-        // self.persister.save_raft_state(data);
         let mut data = Vec::new();
-        // let msg = (&self.current_term, &self.voted_for, &self.log);
         let per = Persistent {
             current_term: self.current_term.load(Ordering::SeqCst),
             voted_for: self.voted_for.map_or(-1, |v| v as i32),
@@ -242,24 +211,17 @@ impl Raft {
             last_included_index: self.last_included_index.load(Ordering::SeqCst),
             last_included_term: self.last_included_term.load(Ordering::SeqCst),
         };
-        // labcodec::encode(&per, &mut data).unwrap();
         per.encode(&mut data).unwrap();
         self.raft_state_size
             .store(data.len() as u64, Ordering::SeqCst);
         self.persister.save_raft_state(data);
     }
 
-    /// save Raft's persistent state to stable storage,
+    /// save RaftInner's persistent state to stable storage,
     /// where it can later be retrieved after a crash and restart.
     /// see paper's Figure 2 for a description of what should be persistent.
     fn persist_with_snapshot(&mut self, snapshot: Vec<u8>) {
-        // Your code here (2C).
-        // Example:
-        // labcodec::encode(&self.xxx, &mut data).unwrap();
-        // labcodec::encode(&self.yyy, &mut data).unwrap();
-        // self.persister.save_raft_state(data);
         let mut data = Vec::new();
-        // let msg = (&self.current_term, &self.voted_for, &self.log);
         let per = Persistent {
             current_term: self.current_term.load(Ordering::SeqCst),
             voted_for: self.voted_for.map_or(-1, |v| v as i32),
@@ -267,7 +229,6 @@ impl Raft {
             last_included_index: self.last_included_index.load(Ordering::SeqCst),
             last_included_term: self.last_included_term.load(Ordering::SeqCst),
         };
-        // labcodec::encode(&per, &mut data).unwrap();
         per.encode(&mut data).unwrap();
         self.persister.save_state_and_snapshot(data, snapshot);
     }
@@ -312,9 +273,7 @@ impl Raft {
                 command: self.log[index].command.to_owned(),
                 command_index: self.last_applied.load(Ordering::SeqCst) + 1,
             };
-            self.apply_ch
-                .unbounded_send(msg)
-                .expect("Unable send ApplyMsg");
+            self.apply_ch.send(msg).expect("Unable send ApplyMsg");
             self.last_applied.fetch_add(1, Ordering::SeqCst);
             if self.is_leader.load(Ordering::SeqCst) {
                 info!(
@@ -331,7 +290,6 @@ impl Raft {
         let index = self.log.len() as u64 + self.last_included_index.load(Ordering::SeqCst) + 1;
         let term = self.current_term.load(Ordering::SeqCst);
         let is_leader = self.is_leader.load(Ordering::SeqCst);
-        // Your code here (2B).
 
         if is_leader {
             self.log.push(LogEntry {
@@ -385,9 +343,7 @@ impl Raft {
             command: snapshot,
             command_index: 0,
         };
-        self.apply_ch
-            .unbounded_send(msg)
-            .expect("Unable send ApplyMsg");
+        self.apply_ch.send(msg).expect("Unable send ApplyMsg");
 
         info!("{} Become Leader", self);
     }
@@ -441,24 +397,7 @@ impl Raft {
     }
 }
 
-impl Raft {
-    /// example code to send a RequestVote RPC to a server.
-    /// server is the index of the target server in peers.
-    /// expects RPC arguments in args.
-    ///
-    /// The labrpc package simulates a lossy network, in which servers
-    /// may be unreachable, and in which requests and replies may be lost.
-    /// This method sends a request and waits for a reply. If a reply arrives
-    /// within a timeout interval, This method returns Ok(_); otherwise
-    /// this method returns Err(_). Thus this method may not return for a while.
-    /// An Err(_) return can be caused by a dead server, a live server that
-    /// can't be reached, a lost request, or a lost reply.
-    ///
-    /// This method is guaranteed to return (perhaps after a delay) *except* if
-    /// the handler function on the server side does not return.  Thus there
-    /// is no need to implement your own timeouts around this method.
-    ///
-    /// look at the comments in ../labrpc/src/lib.rs for more details.
+impl RaftInner {
     fn send_request_vote(
         &self,
         server: usize,
@@ -472,7 +411,7 @@ impl Raft {
                 .request_vote(Request::new(args))
                 .await
                 .map(|resp| resp.into_inner())
-                .map_err(|e| KvError::StringError(e.to_string()));
+                .map_err(KvError::Rpc);
             let _ = tx.send(res);
         });
         rx
@@ -533,7 +472,7 @@ impl Raft {
             last_log_term,
         };
         // let mut rx_vec = FuturesUnordered::new();
-        info!("{} Send {} to ALL Node", self, args);
+        info!("{} Send {} to ALL RaftNode", self, args);
         let is_candidate = Arc::new(AtomicBool::new(true));
         for server in 0..self.peers.len() {
             if server != self.me {
@@ -556,14 +495,12 @@ impl Raft {
                                     peers_num
                                 );
                                 if reply.term > term {
-                                    tx.send(RaftEvent::BecomeFollower(reply.term))
-                                        .await
-                                        .unwrap();
+                                    tx.send(RaftEvent::BecomeFollower(reply.term)).unwrap();
                                 } else if reply.vote_granted {
                                     vote_count.fetch_add(1, Ordering::Relaxed);
                                     if vote_count.load(Ordering::SeqCst) > peers_num / 2 {
                                         is_candidate.store(false, Ordering::SeqCst);
-                                        tx.send(RaftEvent::BecomeLeader(reply.term)).await.unwrap();
+                                        tx.send(RaftEvent::BecomeLeader(reply.term)).unwrap();
                                     }
                                 }
                             }
@@ -575,24 +512,7 @@ impl Raft {
     }
 }
 
-impl Raft {
-    /// example code to send a RequestVote RPC to a server.
-    /// server is the index of the target server in peers.
-    /// expects RPC arguments in args.
-    ///
-    /// The labrpc package simulates a lossy network, in which servers
-    /// may be unreachable, and in which requests and replies may be lost.
-    /// This method sends a request and waits for a reply. If a reply arrives
-    /// within a timeout interval, This method returns Ok(_); otherwise
-    /// this method returns Err(_). Thus this method may not return for a while.
-    /// An Err(_) return can be caused by a dead server, a live server that
-    /// can't be reached, a lost request, or a lost reply.
-    ///
-    /// This method is guaranteed to return (perhaps after a delay) *except* if
-    /// the handler function on the server side does not return.  Thus there
-    /// is no need to implement your own timeouts around this method.
-    ///
-    /// look at the comments in ../labrpc/src/lib.rs for more details.
+impl RaftInner {
     fn send_append_entries(
         &self,
         server: usize,
@@ -606,7 +526,7 @@ impl Raft {
                 .append_entries(Request::new(args))
                 .await
                 .map(|resp| resp.into_inner())
-                .map_err(|e| KvError::StringError(e.to_string()));
+                .map_err(KvError::Rpc);
             let _ = tx.send(res);
         });
         rx
@@ -712,7 +632,7 @@ impl Raft {
 
     fn send_append_entries_all(&mut self) {
         // let mut rx_vec = FuturesUnordered::new();
-        debug!("{} Send append entries to ALL Node", self);
+        debug!("{} Send append entries to ALL RaftNode", self);
         let term = self.current_term.load(Ordering::SeqCst);
         // let peers_num = self.peers.len();
         for server in 0..self.peers.len() {
@@ -735,14 +655,12 @@ impl Raft {
                         data: self.persister.snapshot(),
                         done: true,
                     };
-                    debug!("{} Send Node {} {} ", self, server, args);
+                    debug!("{} Send RaftNode {} {} ", self, server, args);
                     let rx = self.send_install_snapshot(server, args);
                     tokio::spawn(async move {
                         if let Ok(Ok(reply)) = rx.await {
                             if reply.term > term {
-                                tx.send(RaftEvent::BecomeFollower(reply.term))
-                                    .await
-                                    .unwrap();
+                                tx.send(RaftEvent::BecomeFollower(reply.term)).unwrap();
                             } else {
                                 match_index.store(last_included_index, Ordering::SeqCst);
                                 next_index.store(last_included_index + 1, Ordering::SeqCst);
@@ -777,7 +695,7 @@ impl Raft {
                         entries,
                         leader_commit: self.commit_index.load(Ordering::SeqCst),
                     };
-                    debug!("{} Send Node {} {} ", self, server, args);
+                    debug!("{} Send RaftNode {} {} ", self, server, args);
                     // rx_vec.push(self.send_append_entries(server, args));
                     let rx = self.send_append_entries(server, args);
                     tokio::spawn(async move {
@@ -785,9 +703,7 @@ impl Raft {
                             if is_leader.load(Ordering::SeqCst) {
                                 if !reply.success && reply.term > term {
                                     is_leader.store(false, Ordering::SeqCst);
-                                    tx.send(RaftEvent::BecomeFollower(reply.term))
-                                        .await
-                                        .unwrap();
+                                    tx.send(RaftEvent::BecomeFollower(reply.term)).unwrap();
                                 } else if reply.success {
                                     // info!("recv {}, upper: {}", reply, upper_log_index);
                                     match_index.store(upper_log_index, Ordering::SeqCst);
@@ -806,7 +722,7 @@ impl Raft {
     }
 }
 
-impl Raft {
+impl RaftInner {
     fn send_install_snapshot(
         &self,
         server: usize,
@@ -820,7 +736,7 @@ impl Raft {
                 .install_snapshot(Request::new(args))
                 .await
                 .map(|resp| resp.into_inner())
-                .map_err(|e| KvError::StringError(e.to_string()));
+                .map_err(KvError::Rpc);
             let _ = tx.send(res);
         });
         rx
@@ -859,9 +775,7 @@ impl Raft {
                 command: args.data,
                 command_index: 0,
             };
-            self.apply_ch
-                .unbounded_send(msg)
-                .expect("Unable send ApplyMsg");
+            self.apply_ch.send(msg).expect("Unable send ApplyMsg");
         }
 
         InstallSnapshotReply {
@@ -870,6 +784,7 @@ impl Raft {
     }
 }
 
+#[derive(Debug)]
 enum RaftEvent {
     RequestVote(RequestVoteArgs, Sender<RequestVoteReply>),
     AppendEntries(AppendEntriesArgs, Sender<AppendEntriesReply>),
@@ -882,15 +797,17 @@ enum RaftEvent {
 }
 
 struct RaftExecutor {
-    raft: Raft,
+    raft: RaftInner,
+    receiver: UnboundedReceiver<RaftEvent>,
     timeout: Delay,
     apply_msg_delay: Delay,
 }
 
 impl RaftExecutor {
-    fn new(raft: Raft) -> RaftExecutor {
+    fn new(raft: RaftInner, receiver: UnboundedReceiver<RaftEvent>) -> RaftExecutor {
         RaftExecutor {
             raft,
+            receiver,
             timeout: Delay::new(election_timeout()),
             apply_msg_delay: Delay::new(heartbeat_timeout()),
         }
@@ -932,7 +849,7 @@ impl Stream for RaftExecutor {
             }
             Poll::Pending => {}
         };
-        match self.raft.receiver.poll_next_unpin(cx) {
+        match self.receiver.poll_recv(cx) {
             Poll::Ready(Some(event)) => match event {
                 RaftEvent::RequestVote(args, tx) => {
                     let reply = self.raft.handle_request_vote(args);
@@ -1002,39 +919,30 @@ impl Stream for RaftExecutor {
     }
 }
 
-// Choose concurrency paradigm.
-//
-// You can either drive the raft state machine by the rpc framework,
-//
-// ```rust
-// struct Node { raft: Arc<Mutex<Raft>> }
-// ```
-//
-// or spawn a new thread runs the raft state machine and communicate via
-// a channel.
-//
-// ```rust
-// struct Node { sender: Sender<Msg> }
-// ```
 #[derive(Clone)]
-pub struct Node {
+pub struct RaftNode {
     // Your code here.
     handle: Arc<Mutex<thread::JoinHandle<()>>>,
     me: usize,
     sender: UnboundedSender<RaftEvent>,
-    pub term: Arc<AtomicU64>,
-    pub is_leader: Arc<AtomicBool>,
-    pub raft_state_size: Arc<AtomicU64>,
+    term: Arc<AtomicU64>,
+    is_leader: Arc<AtomicBool>,
+    raft_state_size: Arc<AtomicU64>,
     log_index: Arc<AtomicU64>,
     commit_index: Arc<AtomicU64>,
     last_applied: Arc<AtomicU64>,
 }
 
-impl Node {
+impl RaftNode {
     /// Create a new raft service.
-    pub fn new(raft: Raft) -> Node {
-        let me = raft.me;
-        let sender = raft.sender.clone();
+    pub fn new(
+        peers: Vec<RaftRpcClient<Channel>>,
+        me: usize,
+        persister: Box<dyn Persister>,
+        apply_ch: UnboundedSender<ApplyMsg>,
+    ) -> RaftNode {
+        let (sender, receiver) = unbounded_channel();
+        let raft = RaftInner::new(peers, me, persister, apply_ch, sender.clone());
         let term = raft.current_term.clone();
         let is_leader = raft.is_leader.clone();
         let raft_state_size = raft.raft_state_size.clone();
@@ -1042,7 +950,7 @@ impl Node {
         let last_applied = raft.last_applied.clone();
         let log_index = raft.log_index.clone();
 
-        let mut raft_executor = RaftExecutor::new(raft);
+        let mut raft_executor = RaftExecutor::new(raft, receiver);
         let threaded_rt = Builder::new_multi_thread().enable_all().build().unwrap();
         let handle = thread::Builder::new()
             .name(format!("RaftNode-{}", me))
@@ -1056,7 +964,7 @@ impl Node {
                 })
             })
             .unwrap();
-        Node {
+        RaftNode {
             handle: Arc::new(Mutex::new(handle)),
             me,
             sender,
@@ -1069,18 +977,6 @@ impl Node {
         }
     }
 
-    /// the service using Raft (e.g. a k/v server) wants to start
-    /// agreement on the next command to be appended to Raft's log. if this
-    /// server isn't the leader, returns [`Error::NotLeader`]. otherwise start
-    /// the agreement and return immediately. there is no guarantee that this
-    /// command will ever be committed to the Raft log, since the leader
-    /// may fail or lose an election. even if the Raft instance has been killed,
-    /// this function should return gracefully.
-    ///
-    /// the first value of the tuple is the index that the command will appear
-    /// at if it's ever committed. the second is the current term.
-    ///
-    /// This method must return without blocking on the raft.
     pub fn start<M>(&self, command: &M) -> Result<(u64, u64)>
     where
         M: Message,
@@ -1096,7 +992,7 @@ impl Node {
             let sender = self.sender.clone();
             let handle = thread::spawn(move || {
                 sender
-                    .unbounded_send(RaftEvent::StartCommand(buf, tx))
+                    .send(RaftEvent::StartCommand(buf, tx))
                     .expect("Unable to send start command to RaftExecutor");
 
                 let fut_values = async { rx.await };
@@ -1104,79 +1000,48 @@ impl Node {
             });
             let response = handle.join().unwrap();
             debug!(
-                "Node {} -- Start a Command, response with: {:?}",
+                "RaftNode {} -- Start a Command, response with: {:?}",
                 self.me, response
             );
             response
         } else {
-            debug!("Node {} -- Start a Command but in Not Leader", self.me);
+            debug!("RaftNode {} -- Start a Command but in Not Leader", self.me);
             Err(KvError::NotLeader)
         }
     }
 
     pub fn start_snapshot(&self, snapshot: Vec<u8>, last_applied: u64) {
         self.sender
-            .unbounded_send(RaftEvent::StartSnapshot(snapshot, last_applied))
+            .send(RaftEvent::StartSnapshot(snapshot, last_applied))
             .expect("Unable to send start Snapshot to RaftExecutor");
 
-        debug!("Node {} -- Start a Snapshot", self.me,);
+        debug!("RaftNode {} -- Start a Snapshot", self.me,);
     }
 
     /// The current term of this peer.
     pub fn term(&self) -> u64 {
-        // Your code here.
-        // Example:
-        // self.raft.term
-        // crate::your_code_here(())
-        // let raft = self.raft.lock().unwrap();
-        // raft.current_term.load(Ordering::SeqCst)
         self.term.load(Ordering::SeqCst)
     }
 
     /// Whether this peer believes it is the leader.
     pub fn is_leader(&self) -> bool {
-        // Your code here.
-        // Example:
-        // self.raft.leader_id == self.id
-        // crate::your_code_here(())
-        // let raft = self.raft.lock().unwrap();
-        // raft.role == RaftRole::Leader
         self.is_leader.load(Ordering::SeqCst)
     }
 
-    /// The current state of this peer.
-    pub fn get_state(&self) -> State {
-        State {
-            term: self.term(),
-            is_leader: self.is_leader(),
-        }
-    }
-
-    /// the tester calls kill() when a Raft instance won't be
-    /// needed again. you are not required to do anything in
-    /// kill(), but it might be convenient to (for example)
-    /// turn off debug output from this instance.
-    /// In Raft paper, a server crash is a PHYSICAL crash,
-    /// A.K.A all resources are reset. But we are simulating
-    /// a VIRTUAL crash in tester, so take care of background
-    /// threads you generated with this Raft Node.
     pub fn kill(&self) {
-        let _ = self.sender.unbounded_send(RaftEvent::Shutdown);
+        let _ = self.sender.send(RaftEvent::Shutdown);
     }
 }
 
 #[tonic::async_trait]
-impl RaftRpc for Node {
-    // example RequestVote RPC handler.
-    //
-    // CAVEATS: Please avoid locking or sleeping here, it may jam the network.
+impl RaftRpc for RaftNode {
     async fn request_vote(
         &self,
         args: Request<RequestVoteArgs>,
     ) -> std::result::Result<Response<RequestVoteReply>, Status> {
         let (tx, rx) = channel();
         let event = RaftEvent::RequestVote(args.into_inner(), tx);
-        let _ = self.sender.clone().send(event).await;
+        let _ = self.sender.clone().send(event);
         let reply = rx.await;
         reply
             .map(|reply| Response::new(reply))
@@ -1189,7 +1054,7 @@ impl RaftRpc for Node {
     ) -> std::result::Result<Response<AppendEntriesReply>, Status> {
         let (tx, rx) = channel();
         let event = RaftEvent::AppendEntries(args.into_inner(), tx);
-        let _ = self.sender.clone().send(event).await;
+        let _ = self.sender.clone().send(event);
         let reply = rx.await;
         reply
             .map(|reply| Response::new(reply))
@@ -1202,7 +1067,7 @@ impl RaftRpc for Node {
     ) -> std::result::Result<Response<InstallSnapshotReply>, Status> {
         let (tx, rx) = channel();
         let event = RaftEvent::InstallSnapshot(args.into_inner(), tx);
-        let _ = self.sender.clone().send(event).await;
+        let _ = self.sender.clone().send(event);
         let reply = rx.await;
         reply
             .map(|reply| Response::new(reply))

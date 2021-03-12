@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package kvraftpb;
+
+/// Put or Append
+message PutAppendRequest {
+  string key = 1;
+  string value = 2;
+  // "Put" or "Append"
+  Op op = 3;
+  // You'll have to add definitions here.
+  string name = 4;
+  uint64 seq = 5;
+}
+
+message PutAppendReply {
+  bool wrong_leader = 1;
+  string err = 2;
+  Op op = 3;
+  string name = 4;
+  uint64 seq = 5;
+}
+
+message GetRequest {
+  string key = 1;
+  // You'll have to add definitions here.
+  string name = 2;
+  uint64 seq = 3;
+}
+
+message GetReply {
+  bool wrong_leader = 1;
+  string err = 2;
+  string value = 3;
+}
+
+message Snapshot {
+  repeated string keys = 1;
+  repeated string values = 2;
+  repeated string clients = 3;
+  repeated uint64 seqs = 4;
+}

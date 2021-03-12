@@ -1,6 +1,9 @@
 // #![deny(missing_docs)]
 //! A key-value store system
 
+#![allow(dead_code)]
+#![allow(unused)]
+
 #[macro_use]
 extern crate log;
 
@@ -8,7 +11,7 @@ mod backend;
 mod client;
 mod common;
 mod error;
-/// a
+mod raft;
 mod rpc;
 mod server;
 /// Thread Pool

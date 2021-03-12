@@ -14,6 +14,8 @@ pub enum KvError {
     /// Serialization or deserialization error.
     #[error("{0}")]
     Serde(#[from] serde_json::Error),
+    #[error("{0}")]
+    Rpc(#[from] tonic::Status),
     /// Unknown Engine
     #[error("Unknown Engine: {0}")]
     ParserError(String),

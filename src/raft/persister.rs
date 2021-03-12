@@ -5,7 +5,12 @@
 //! so, while you can modify this code to help you debug, please
 //! test with the original before submitting.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    fs::OpenOptions,
+    io::{BufReader, BufWriter, Read, Write},
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 pub trait Persister: Send + 'static {
     fn raft_state(&self) -> Vec<u8>;
@@ -41,6 +46,87 @@ impl<T: ?Sized + Sync + Persister> Persister for Arc<T> {
     }
     fn snapshot(&self) -> Vec<u8> {
         (**self).snapshot()
+    }
+}
+
+pub struct FilePersister {
+    raft_state: PathBuf,
+    snapshot: PathBuf,
+}
+
+impl Default for FilePersister {
+    fn default() -> Self {
+        FilePersister {
+            raft_state: PathBuf::from("raft_state.bin"),
+            snapshot: PathBuf::from("snapshot.bin"),
+        }
+    }
+}
+
+impl FilePersister {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Persister for FilePersister {
+    fn raft_state(&self) -> Vec<u8> {
+        let mut reader = BufReader::new(
+            OpenOptions::new()
+                .create(true)
+                .read(true)
+                .open(self.raft_state.clone())
+                .unwrap(),
+        );
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).unwrap();
+        buf
+    }
+
+    fn snapshot(&self) -> Vec<u8> {
+        let mut reader = BufReader::new(
+            OpenOptions::new()
+                .create(true)
+                .read(true)
+                .open(self.snapshot.clone())
+                .unwrap(),
+        );
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).unwrap();
+        buf
+    }
+
+    fn save_raft_state(&self, state: Vec<u8>) {
+        let mut writer = BufWriter::new(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(self.raft_state.clone())
+                .unwrap(),
+        );
+        writer.write_all(&state).unwrap();
+        writer.flush().unwrap();
+    }
+
+    fn save_state_and_snapshot(&self, state: Vec<u8>, snapshot: Vec<u8>) {
+        let mut writer = BufWriter::new(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(self.raft_state.clone())
+                .unwrap(),
+        );
+        writer.write_all(&state).unwrap();
+        writer.flush().unwrap();
+        let mut writer = BufWriter::new(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(self.snapshot.clone())
+                .unwrap(),
+        );
+        writer.write_all(&snapshot).unwrap();
+        writer.flush().unwrap();
     }
 }
 
