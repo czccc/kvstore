@@ -23,6 +23,8 @@ pub trait KvsEngine: Clone + Send + 'static {
     ///
     ///Return an error if the key does not exit or value is not read successfully.
     fn remove(&self, key: String) -> Result<()>;
+    fn export(&self) -> Result<(Vec<String>, Vec<String>)>;
+    fn import(&self, data: (Vec<String>, Vec<String>)) -> Result<()>;
 }
 
 /// kind
@@ -55,6 +57,18 @@ impl EngineKind {
         match self {
             EngineKind::kvs(store) => store.remove(key),
             EngineKind::sled(store) => store.remove(key),
+        }
+    }
+    pub fn export(&self) -> Result<(Vec<String>, Vec<String>)> {
+        match self {
+            EngineKind::kvs(store) => store.export(),
+            EngineKind::sled(store) => store.export(),
+        }
+    }
+    pub fn import(&self, data: (Vec<String>, Vec<String>)) -> Result<()> {
+        match self {
+            EngineKind::kvs(store) => store.import(data),
+            EngineKind::sled(store) => store.import(data),
         }
     }
 }

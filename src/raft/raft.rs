@@ -21,7 +21,6 @@ use tokio::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         oneshot::{channel, Receiver, Sender},
     },
-    time::timeout,
 };
 use tokio_stream::{Stream, StreamExt};
 use tonic::{transport::Channel, Code, Request, Response, Status};
@@ -77,7 +76,7 @@ struct RaftInner {
     // RPC end points of all peers
     peers: Vec<RaftRpcClient<Channel>>,
     // Object to hold this peer's persisted state
-    persister: Box<dyn Persister>,
+    persister: Arc<dyn Persister>,
     // this peer's index into peers[]
     me: usize,
 
@@ -113,6 +112,11 @@ struct RaftInner {
     // ApplyMsg channel
     sender: UnboundedSender<RaftEvent>,
     apply_ch: UnboundedSender<ApplyMsg>,
+
+    //
+    receiver: UnboundedReceiver<RaftEvent>,
+    timeout: Delay,
+    apply_msg_delay: Delay,
 }
 
 impl Display for RaftInner {
@@ -150,10 +154,9 @@ impl RaftInner {
     pub fn new(
         peers: Vec<RaftRpcClient<Channel>>,
         me: usize,
-        persister: Box<dyn Persister>,
+        persister: Arc<dyn Persister>,
         apply_ch: UnboundedSender<ApplyMsg>,
-        sender: UnboundedSender<RaftEvent>,
-    ) -> RaftInner {
+    ) -> (RaftInner, UnboundedSender<RaftEvent>) {
         let raft_state = persister.raft_state();
         let peers_num = peers.len();
 
@@ -182,8 +185,13 @@ impl RaftInner {
             next_index: Vec::new(),
             match_index: Vec::new(),
 
-            sender,
+            sender: sender.clone(),
             apply_ch,
+
+            // for stream
+            receiver,
+            timeout: Delay::new(election_timeout()),
+            apply_msg_delay: Delay::new(heartbeat_timeout()),
         };
 
         for _i in 0..peers_num {
@@ -196,7 +204,7 @@ impl RaftInner {
 
         debug!("{} Started!", rf);
 
-        rf
+        (rf, sender)
     }
 
     /// save RaftInner's persistent state to stable storage,
@@ -477,7 +485,7 @@ impl RaftInner {
         for server in 0..self.peers.len() {
             if server != self.me {
                 let args = args.clone();
-                let mut tx = self.sender.clone();
+                let tx = self.sender.clone();
                 let peers_num = self.peers.len();
                 let is_candidate = is_candidate.clone();
                 let term = self.current_term.load(Ordering::SeqCst);
@@ -639,7 +647,7 @@ impl RaftInner {
             if server != self.me {
                 let match_index = self.match_index[server].clone();
                 let next_index = self.next_index[server].clone();
-                let mut tx = self.sender.clone();
+                let tx = self.sender.clone();
                 let is_leader = self.is_leader.clone();
                 let last_included_index = self.last_included_index.load(Ordering::SeqCst);
                 let last_included_term = self.last_included_term.load(Ordering::SeqCst);
@@ -796,44 +804,26 @@ enum RaftEvent {
     Shutdown,
 }
 
-struct RaftExecutor {
-    raft: RaftInner,
-    receiver: UnboundedReceiver<RaftEvent>,
-    timeout: Delay,
-    apply_msg_delay: Delay,
-}
-
-impl RaftExecutor {
-    fn new(raft: RaftInner, receiver: UnboundedReceiver<RaftEvent>) -> RaftExecutor {
-        RaftExecutor {
-            raft,
-            receiver,
-            timeout: Delay::new(election_timeout()),
-            apply_msg_delay: Delay::new(heartbeat_timeout()),
-        }
-    }
-}
-
-impl Stream for RaftExecutor {
+impl Stream for RaftInner {
     type Item = ();
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        trace!("{} poll event!", self.raft);
+        trace!("{} poll event!", self);
         match self.timeout.poll_unpin(cx) {
             Poll::Ready(()) => {
                 return {
-                    trace!("{} poll timeout ready!", self.raft);
-                    if self.raft.is_leader.load(Ordering::SeqCst) {
+                    trace!("{} poll timeout ready!", self);
+                    if self.is_leader.load(Ordering::SeqCst) {
                         self.timeout.reset(heartbeat_timeout());
-                        self.raft.send_append_entries_all();
+                        self.send_append_entries_all();
                         Poll::Ready(Some(()))
                     } else {
-                        trace!("{} loss Leader connection", self.raft);
+                        trace!("{} loss Leader connection", self);
                         self.timeout.reset(election_timeout());
-                        self.raft.become_candidate();
+                        self.become_candidate();
                         Poll::Ready(Some(()))
                     }
                 };
@@ -842,9 +832,9 @@ impl Stream for RaftExecutor {
         };
         match self.apply_msg_delay.poll_unpin(cx) {
             Poll::Ready(()) => {
-                trace!("{} poll Apply Msg ready!", self.raft);
+                trace!("{} poll Apply Msg ready!", self);
                 self.apply_msg_delay.reset(heartbeat_timeout());
-                self.raft.send_apply_msg();
+                self.send_apply_msg();
                 return Poll::Ready(Some(()));
             }
             Poll::Pending => {}
@@ -852,7 +842,7 @@ impl Stream for RaftExecutor {
         match self.receiver.poll_recv(cx) {
             Poll::Ready(Some(event)) => match event {
                 RaftEvent::RequestVote(args, tx) => {
-                    let reply = self.raft.handle_request_vote(args);
+                    let reply = self.handle_request_vote(args);
                     if reply.vote_granted {
                         self.timeout.reset(election_timeout());
                     }
@@ -861,7 +851,7 @@ impl Stream for RaftExecutor {
                 }
                 RaftEvent::AppendEntries(args, tx) => {
                     let current_term = args.term;
-                    let reply = self.raft.handle_append_entries(args);
+                    let reply = self.handle_append_entries(args);
                     if reply.success || reply.term == current_term {
                         self.timeout.reset(election_timeout());
                     }
@@ -869,41 +859,38 @@ impl Stream for RaftExecutor {
                     Poll::Ready(Some(()))
                 }
                 RaftEvent::InstallSnapshot(args, tx) => {
-                    let reply = self.raft.handle_install_snapshot(args);
+                    let reply = self.handle_install_snapshot(args);
                     let _ = tx.send(reply);
                     Poll::Ready(Some(()))
                 }
                 RaftEvent::BecomeLeader(term) => {
-                    self.raft.become_leader(term);
+                    self.become_leader(term);
                     self.timeout.reset(heartbeat_timeout());
-                    self.raft.send_append_entries_all();
+                    self.send_append_entries_all();
                     Poll::Ready(Some(()))
                 }
                 RaftEvent::BecomeFollower(term) => {
-                    self.raft.become_follower(term);
+                    self.become_follower(term);
                     self.timeout.reset(election_timeout());
                     Poll::Ready(Some(()))
                 }
                 RaftEvent::StartCommand(command, tx) => {
-                    debug!("{} Exexutor -- Receive command!", self.raft);
-                    let _ = tx.send(self.raft.start(&command));
+                    debug!("{} Exexutor -- Receive command!", self);
+                    let _ = tx.send(self.start(&command));
                     Poll::Ready(Some(()))
                 }
                 RaftEvent::StartSnapshot(snapshot, last_applied) => {
-                    let snapshot_len = (last_applied
-                        - self.raft.last_included_index.load(Ordering::SeqCst))
-                        as usize;
+                    let snapshot_len =
+                        (last_applied - self.last_included_index.load(Ordering::SeqCst)) as usize;
                     if snapshot_len > 0 {
-                        info!("{} Exexutor -- Receive Snapshot!", self.raft);
-                        self.raft
-                            .last_included_index
+                        info!("{} Exexutor -- Receive Snapshot!", self);
+                        self.last_included_index
                             .store(last_applied, Ordering::SeqCst);
-                        self.raft
-                            .last_included_term
-                            .store(self.raft.log[snapshot_len - 1].term, Ordering::SeqCst);
-                        self.raft.log.drain(..snapshot_len);
-                        self.raft.persist_with_snapshot(snapshot);
-                        info!("{} Exexutor -- Finish Snapshot!", self.raft);
+                        self.last_included_term
+                            .store(self.log[snapshot_len - 1].term, Ordering::SeqCst);
+                        self.log.drain(..snapshot_len);
+                        self.persist_with_snapshot(snapshot);
+                        info!("{} Exexutor -- Finish Snapshot!", self);
                     }
                     Poll::Ready(Some(()))
                 }
@@ -938,11 +925,10 @@ impl RaftNode {
     pub fn new(
         peers: Vec<RaftRpcClient<Channel>>,
         me: usize,
-        persister: Box<dyn Persister>,
+        persister: Arc<dyn Persister>,
         apply_ch: UnboundedSender<ApplyMsg>,
     ) -> RaftNode {
-        let (sender, receiver) = unbounded_channel();
-        let raft = RaftInner::new(peers, me, persister, apply_ch, sender.clone());
+        let (mut raft, sender) = RaftInner::new(peers, me, persister, apply_ch);
         let term = raft.current_term.clone();
         let is_leader = raft.is_leader.clone();
         let raft_state_size = raft.raft_state_size.clone();
@@ -950,14 +936,13 @@ impl RaftNode {
         let last_applied = raft.last_applied.clone();
         let log_index = raft.log_index.clone();
 
-        let mut raft_executor = RaftExecutor::new(raft, receiver);
         let threaded_rt = Builder::new_multi_thread().enable_all().build().unwrap();
         let handle = thread::Builder::new()
             .name(format!("RaftNode-{}", me))
             .spawn(move || {
                 threaded_rt.block_on(async move {
                     debug!("Enter main executor!");
-                    while raft_executor.next().await.is_some() {
+                    while raft.next().await.is_some() {
                         trace!("get event");
                     }
                     debug!("Leave main executor!");

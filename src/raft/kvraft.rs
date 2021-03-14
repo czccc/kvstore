@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     sync::Arc,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         Mutex,
     },
     task::Poll,
@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{rpc::kvs_service::*, rpc::raft_service::*, EngineKind};
+use crate::{rpc::kvs_service::*, EngineKind};
 use prost::Message;
 use tonic::{Request, Response, Status};
 
@@ -24,7 +24,6 @@ use tokio::{
     time::timeout,
 };
 use tokio_stream::{Stream, StreamExt};
-use tonic::transport::Channel;
 
 use super::raft;
 
@@ -39,50 +38,81 @@ pub struct KvRaftInner {
     store: EngineKind,
     pending: HashMap<u64, KvEvent>,
     last_index: HashMap<String, Arc<AtomicU64>>,
+    // Stream
+    receiver: UnboundedReceiver<KvEvent>,
 }
 
 impl std::fmt::Display for KvRaftInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let desp = if self.rf.is_leader() {
-            String::from("Leader")
-        } else {
-            String::from("Follow")
-        };
-        write!(f, "[{} {}]", desp, self.me)
+        // let desp = if self.rf.is_leader() {
+        //     String::from("Leader")
+        // } else {
+        //     String::from("Follow")
+        // };
+        write!(f, "[{} {}]", "Server", self.me)
     }
 }
 
 impl KvRaftInner {
     pub fn new(
         store: EngineKind,
-        servers: Vec<RaftRpcClient<Channel>>,
+        rf: raft::RaftNode,
         me: usize,
-        persister: Box<dyn persister::Persister>,
+        persister: Arc<dyn persister::Persister>,
         maxraftstate: Option<usize>,
+        receiver: UnboundedReceiver<KvEvent>,
+        apply_ch: UnboundedReceiver<ApplyMsg>,
     ) -> KvRaftInner {
-        let (tx, apply_ch) = unbounded_channel();
+        // let (tx, apply_ch) = unbounded_channel();
         let snapshot = persister.snapshot();
-        let rf = raft::RaftNode::new(servers, me, persister, tx);
 
         let mut server = KvRaftInner {
-            rf,
             me,
+            rf,
             maxraftstate,
             apply_ch,
             store,
             pending: HashMap::new(),
             last_index: HashMap::new(),
+            receiver,
         };
         server.restore_from_snapshot(snapshot);
         server
     }
 
     fn create_snapshot(&self) -> Vec<u8> {
-        todo!();
+        let (keys, values) = self.store.export().unwrap();
+        let snapshot = Snapshot {
+            keys,
+            values,
+            clients: self.last_index.keys().cloned().collect(),
+            seqs: self
+                .last_index
+                .values()
+                .cloned()
+                .map(|v| v.load(Ordering::SeqCst))
+                .collect(),
+        };
+        let mut buf = Vec::new();
+        snapshot.encode(&mut buf).unwrap();
+        buf
     }
 
     fn restore_from_snapshot(&mut self, snapshot: Vec<u8>) {
-        todo!();
+        if let Ok(Snapshot {
+            keys,
+            values,
+            clients,
+            seqs,
+        }) = Snapshot::decode(&*snapshot)
+        {
+            self.store.import((keys, values)).unwrap();
+            let last_index: HashMap<String, Arc<AtomicU64>> = clients
+                .into_iter()
+                .zip(seqs.into_iter().map(|v| Arc::new(AtomicU64::new(v))))
+                .collect();
+            self.last_index = last_index;
+        }
     }
     fn handle_set(&mut self, args: SetRequest, sender: Sender<Result<SetReply, Status>>) {
         if !self.last_index.contains_key(&args.name) {
@@ -188,12 +218,12 @@ impl KvRaftInner {
     }
 
     fn handle_apply_msg(&mut self, msg: ApplyMsg) {
-        // if !msg.command_valid {
-        //     debug!("{} recv [Snapshot]", self);
-        //     self.restore_from_snapshot(msg.command);
-        //     return;
-        // }
-        debug!(
+        if !msg.command_valid {
+            debug!("{} recv [Snapshot]", self);
+            self.restore_from_snapshot(msg.command);
+            return;
+        }
+        info!(
             "{} recv [ApplyMsg {} {}]",
             self, msg.command_valid, msg.command_index
         );
@@ -203,10 +233,13 @@ impl KvRaftInner {
                 self.last_index
                     .insert(req.name.clone(), Arc::new(AtomicU64::new(0)));
             }
+            info!("q");
             if let Some(KvEvent::Set(args, tx)) = self.pending.remove(&index) {
+                info!("w");
                 if req.seq == args.seq
                     && req.seq > self.last_index[&req.name].load(Ordering::SeqCst)
                 {
+                    info!("get set apply msg: {}, {}", args.key, args.value);
                     self.last_index[&req.name].store(req.seq, Ordering::SeqCst);
                     let reply = self
                         .store
@@ -257,7 +290,7 @@ impl KvRaftInner {
                     let reply = self
                         .store
                         .remove(req.key)
-                        .map(|value| RemoveReply {
+                        .map(|_| RemoveReply {
                             message: String::from("OK"),
                             name: args.name,
                             seq: args.seq,
@@ -277,21 +310,7 @@ pub enum KvEvent {
     Remove(RemoveRequest, Sender<Result<RemoveReply, Status>>),
 }
 
-struct KvExecutor {
-    receiver: UnboundedReceiver<KvEvent>,
-    server: KvRaftInner,
-}
-
-impl KvExecutor {
-    fn new(kv: KvRaftInner, receiver: UnboundedReceiver<KvEvent>) -> KvExecutor {
-        KvExecutor {
-            server: kv,
-            receiver,
-        }
-    }
-}
-
-impl Stream for KvExecutor {
+impl Stream for KvRaftInner {
     type Item = ();
 
     fn poll_next(
@@ -300,18 +319,18 @@ impl Stream for KvExecutor {
     ) -> Poll<Option<Self::Item>> {
         match self.receiver.poll_recv(cx) {
             Poll::Ready(Some(event)) => {
-                debug!("{} Executor recv [Event]", self.server);
+                debug!("{} Executor recv [Event]", self);
                 return match event {
                     KvEvent::Set(args, tx) => {
-                        self.server.handle_set(args, tx);
+                        self.handle_set(args, tx);
                         Poll::Ready(Some(()))
                     }
                     KvEvent::Get(args, tx) => {
-                        self.server.handle_get(args, tx);
+                        self.handle_get(args, tx);
                         Poll::Ready(Some(()))
                     }
                     KvEvent::Remove(args, tx) => {
-                        self.server.handle_remove(args, tx);
+                        self.handle_remove(args, tx);
                         Poll::Ready(Some(()))
                     }
                 };
@@ -319,9 +338,9 @@ impl Stream for KvExecutor {
             Poll::Ready(None) => {}
             Poll::Pending => {}
         }
-        match self.server.apply_ch.poll_recv(cx) {
+        match self.apply_ch.poll_recv(cx) {
             Poll::Ready(Some(msg)) => {
-                self.server.handle_apply_msg(msg);
+                self.handle_apply_msg(msg);
                 Poll::Ready(Some(()))
             }
             Poll::Ready(None) => Poll::Ready(Some(())),
@@ -342,16 +361,16 @@ pub struct KvRaftNode {
 
 impl KvRaftNode {
     pub fn new(
+        rf: raft::RaftNode,
         store: EngineKind,
-        servers: Vec<RaftRpcClient<Channel>>,
         me: usize,
-        persister: Box<dyn persister::Persister>,
+        persister: Arc<dyn persister::Persister>,
         maxraftstate: Option<usize>,
+        apply_ch: UnboundedReceiver<ApplyMsg>,
     ) -> KvRaftNode {
-        let kv_raft = KvRaftInner::new(store, servers, me, persister, maxraftstate);
-
         let (sender, receiver) = unbounded_channel();
-        let mut raft_executor = KvExecutor::new(kv_raft, receiver);
+        let mut kv_raft =
+            KvRaftInner::new(store, rf, me, persister, maxraftstate, receiver, apply_ch);
 
         let threaded_rt = Builder::new_multi_thread().enable_all().build().unwrap();
         let handle = thread::Builder::new()
@@ -359,7 +378,7 @@ impl KvRaftNode {
             .spawn(move || {
                 threaded_rt.block_on(async move {
                     debug!("Enter KvRaftInner main executor!");
-                    while raft_executor.next().await.is_some() {
+                    while kv_raft.next().await.is_some() {
                         trace!("KvRaftInner: Get event");
                     }
                     debug!("Leave KvRaftInner main executor!");
@@ -381,36 +400,31 @@ impl KvRpc for KvRaftNode {
     ) -> std::result::Result<Response<SetReply>, Status> {
         let req = req.into_inner();
         let (tx, rx) = channel();
-        self.sender.send(KvEvent::Set(req, tx));
-        // rx.await
-        todo!();
+        self.sender.send(KvEvent::Set(req, tx)).unwrap();
+        rx.await
+            .unwrap_or_else(|e| Err(Status::cancelled(e.to_string())))
+            .map(|reply| Response::new(reply))
     }
     async fn get(
         &self,
         req: Request<GetRequest>,
     ) -> std::result::Result<Response<GetReply>, Status> {
         let req = req.into_inner();
-        todo!();
-        // self.store
-        //     .get(req.key)
-        //     .map(|value| GetReply {
-        //         message: value.unwrap_or("Key not found".to_string()),
-        //     })
-        //     .map(|reply| Response::new(reply))
-        //     .map_err(|e| Status::unknown(e.to_string()))
+        let (tx, rx) = channel();
+        self.sender.send(KvEvent::Get(req, tx)).unwrap();
+        rx.await
+            .unwrap_or_else(|e| Err(Status::cancelled(e.to_string())))
+            .map(|reply| Response::new(reply))
     }
     async fn remove(
         &self,
         req: Request<RemoveRequest>,
     ) -> std::result::Result<Response<RemoveReply>, Status> {
         let req = req.into_inner();
-        todo!();
-        // self.store
-        //     .remove(req.key)
-        //     .map(|_| RemoveReply {
-        //         message: "OK".to_string(),
-        //     })
-        //     .map(|reply| Response::new(reply))
-        //     .map_err(|e| Status::unknown(e.to_string()))
+        let (tx, rx) = channel();
+        self.sender.send(KvEvent::Remove(req, tx)).unwrap();
+        rx.await
+            .unwrap_or_else(|e| Err(Status::cancelled(e.to_string())))
+            .map(|reply| Response::new(reply))
     }
 }

@@ -47,4 +47,28 @@ impl KvsEngine for KvSled {
             Err(_) => Err(KvError::Unknown),
         }
     }
+
+    fn export(&self) -> Result<(Vec<String>, Vec<String>)> {
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+        self.db
+            .iter()
+            .map(|entity| {
+                let (key, value) = entity.unwrap();
+                keys.push(String::from_utf8(key.to_vec()).unwrap());
+                values.push(String::from_utf8(value.to_vec()).unwrap());
+            })
+            .for_each(drop);
+        Ok((keys, values))
+    }
+    fn import(&self, data: (Vec<String>, Vec<String>)) -> Result<()> {
+        self.db.clear().unwrap();
+        let (keys, values) = data;
+        keys.into_iter()
+            .zip(values.into_iter())
+            .map(|(key, value)| self.db.insert(key.as_bytes(), value.as_bytes()))
+            .for_each(drop);
+        self.db.flush().unwrap();
+        Ok(())
+    }
 }

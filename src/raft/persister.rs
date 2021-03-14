@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub trait Persister: Send + 'static {
+pub trait Persister: Send + Sync + 'static {
     fn raft_state(&self) -> Vec<u8>;
     fn save_raft_state(&self, state: Vec<u8>);
     fn save_state_and_snapshot(&self, state: Vec<u8>, snapshot: Vec<u8>);
@@ -74,6 +74,7 @@ impl Persister for FilePersister {
         let mut reader = BufReader::new(
             OpenOptions::new()
                 .create(true)
+                .write(true)
                 .read(true)
                 .open(self.raft_state.clone())
                 .unwrap(),
@@ -87,6 +88,7 @@ impl Persister for FilePersister {
         let mut reader = BufReader::new(
             OpenOptions::new()
                 .create(true)
+                .write(true)
                 .read(true)
                 .open(self.snapshot.clone())
                 .unwrap(),

@@ -198,6 +198,82 @@ impl KvsEngine for KvStore {
             Err(KvError::KeyNotFound)
         }
     }
+
+    fn export(&self) -> Result<(Vec<String>, Vec<String>)> {
+        let index = self.index.read().unwrap();
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+        index
+            .iter()
+            .map(|(key, cmd_pos)| {
+                let mut readers = self.readers.write().unwrap();
+                let reader = readers
+                    .get_mut(&cmd_pos.gen)
+                    .expect("Cannot find log reader");
+                reader.seek(SeekFrom::Start(cmd_pos.pos)).unwrap();
+                let mut val = String::new();
+                let cmd_reader = reader.take(cmd_pos.len);
+                if let Command::Set { value, .. } = serde_json::from_reader(cmd_reader).unwrap() {
+                    val = value;
+                }
+                keys.push(key.to_owned());
+                values.push(val);
+            })
+            .for_each(drop);
+        Ok((keys, values))
+    }
+    fn import(&self, data: (Vec<String>, Vec<String>)) -> Result<()> {
+        let mut index = self.index.write().unwrap();
+        let mut uncompacted = self.uncompacted.write().unwrap();
+        let mut readers = self.readers.write().unwrap();
+        let mut writer = self.writer.write().unwrap();
+        let mut current_gen = self.current_gen.write().unwrap();
+        let path = self.path.read().unwrap();
+
+        *current_gen += 1;
+        *writer = BufWriterWithPos::new(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(true)
+                .open(log_path(&path, *current_gen))?,
+        )?;
+        readers.insert(
+            *current_gen,
+            BufReaderWithPos::new(File::open(log_path(&path, *current_gen))?)?,
+        );
+
+        let mut new_index = BTreeMap::new();
+        let (keys, values) = data;
+        keys.into_iter()
+            .zip(values.into_iter())
+            .map(|(key, value)| {
+                let cmd = Command::Set {
+                    key: key.clone(),
+                    value,
+                };
+                let pos = writer.pos;
+                serde_json::to_writer(&mut writer.by_ref(), &cmd).unwrap();
+                writer.flush().unwrap();
+                new_index.insert(key, (*current_gen, pos..writer.pos).into());
+            })
+            .for_each(drop);
+        *index = new_index;
+
+        // remove stale log files.
+        let stale_gens: Vec<_> = readers
+            .keys()
+            .filter(|&&gen| gen < *current_gen)
+            .cloned()
+            .collect();
+        for stale_gen in stale_gens {
+            readers.remove(&stale_gen);
+            fs::remove_file(log_path(&path, stale_gen))?;
+        }
+        *uncompacted = 0;
+
+        Ok(())
+    }
 }
 
 fn read_all_logs(path: &Path) -> Result<Vec<u64>> {

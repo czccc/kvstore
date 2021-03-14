@@ -2,7 +2,7 @@
 //! A key-value store system
 
 #![allow(dead_code)]
-#![allow(unused)]
+// #![allow(unused)]
 
 #[macro_use]
 extern crate log;
@@ -25,6 +25,7 @@ pub use rpc::kvs_service::*;
 pub use server::{KvsServer, KvsServerBuilder};
 // pub use thread_pool::{NaiveThreadPool, RayonThreadPool, ShareQueueThreadPool, ThreadPool};
 // pub use thread_pool;
+pub use raft::{FilePersister, KvRaftNode, Persister, RaftNode};
 
 /// preclude
 pub mod preclude {
@@ -32,6 +33,7 @@ pub mod preclude {
     pub use crate::client::KvsClient;
     // pub use crate::common::{Request, Response};
     pub use crate::error::{KvError, Result};
+    pub use crate::raft::{FilePersister, KvRaftNode, Persister, RaftNode};
     pub use crate::rpc::kvs_service::*;
     pub use crate::rpc::raft_service::*;
     pub use crate::server::{KvsServer, KvsServerBuilder};
