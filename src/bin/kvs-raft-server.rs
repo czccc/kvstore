@@ -7,7 +7,6 @@ use std::{
     fs,
     io::Write,
     net::SocketAddr,
-    sync::Arc,
 };
 use structopt::StructOpt;
 
@@ -15,9 +14,8 @@ const DEFAULT_ADDR: &str = "127.0.0.1:4000";
 /// Default Engine tag file
 const ENGINE_TAG_FILE: &str = ".engine";
 
-use kvs::preclude::*;
-use tokio::sync::mpsc::unbounded_channel;
-use tonic::transport::{Channel, Server};
+use kvs::{preclude::*, RaftConfig};
+use tonic::transport::Server;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -89,67 +87,37 @@ fn write_engine_to_dir(engine: &String) -> Result<()> {
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    let root_path = current_dir().unwrap().join("tmp");
+    fs::create_dir(root_path.clone()).unwrap_or(());
+    env::set_current_dir(root_path.clone()).unwrap();
+
     let opt: Opt = Opt::from_args();
     write_engine_to_dir(&opt.engine)?;
 
     info!("Key Value Store Raft Server");
     info!("  Version : {}", env!("CARGO_PKG_VERSION"));
 
-    let root_path = current_dir().unwrap().join("tmp");
-    fs::create_dir(root_path.clone()).unwrap_or(());
+    let mut config = RaftConfig::new();
+    config.set_engine(opt.engine.clone());
+    config.add_raft_node("127.0.0.1:5001".parse().unwrap(), Some(root_path.join("1")));
+    config.add_raft_node("127.0.0.1:5002".parse().unwrap(), Some(root_path.join("2")));
+    config.add_raft_node("127.0.0.1:5003".parse().unwrap(), Some(root_path.join("3")));
 
-    let addrs = vec![
-        (1_usize, "http://127.0.0.1:5001"),
-        (2, "http://127.0.0.1:5002"),
-        (3, "http://127.0.0.1:5003"),
-    ];
-    let peers: Vec<RaftRpcClient<Channel>> = addrs
-        .iter()
-        .map(|(_me, addr)| Channel::from_static(*addr).connect_lazy().unwrap())
-        .map(|res| RaftRpcClient::new(res))
-        .collect();
+    let servers = config.build_kv_raft_servers();
 
-    let addrs1 = vec![
-        (0_usize, "127.0.0.1:5001"),
-        (1, "127.0.0.1:5002"),
-        (2, "127.0.0.1:5003"),
-    ];
-    let handles = addrs1
+    let handles = servers
         .into_iter()
-        .map(|(me, addr)| {
-            let root_path = root_path.clone();
-            let peers = peers.clone();
-            let engine = opt.engine.clone();
+        .map(|(rf, kvrf, addr)| {
             let threaded_rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .unwrap();
             std::thread::spawn(move || {
                 threaded_rt.block_on(async move {
-                    let path = root_path.join(me.to_string());
-                    fs::create_dir(path.clone()).unwrap_or(());
-                    env::set_current_dir(path.clone()).unwrap();
-                    let persister = Arc::new(FilePersister::new());
-                    let (apply_ch_sender, apply_ch_receiver) = unbounded_channel();
-                    let raft_node = RaftNode::new(peers, me, persister.clone(), apply_ch_sender);
-                    let store = match engine.as_ref() {
-                        "kvs" => EngineKind::kvs(KvStore::open(path.clone()).unwrap()),
-                        "sled" => EngineKind::sled(KvSled::open(path.clone()).unwrap()),
-                        unknown => Err(KvError::ParserError(unknown.to_string())).unwrap(),
-                    };
-                    let maxraftstate = Some(1024);
-                    let kv_raft_node = KvRaftNode::new(
-                        raft_node.clone(),
-                        store,
-                        me,
-                        persister.clone(),
-                        maxraftstate,
-                        apply_ch_receiver,
-                    );
                     Server::builder()
-                        .add_service(RaftRpcServer::new(raft_node))
-                        .add_service(KvRpcServer::new(kv_raft_node))
-                        .serve(addr.parse().unwrap())
+                        .add_service(RaftRpcServer::new(rf))
+                        .add_service(KvRpcServer::new(kvrf))
+                        .serve(addr)
                         .await
                         .map_err(|e| KvError::StringError(e.to_string()))
                         .unwrap();

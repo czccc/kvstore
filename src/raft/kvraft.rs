@@ -233,13 +233,10 @@ impl KvRaftInner {
                 self.last_index
                     .insert(req.name.clone(), Arc::new(AtomicU64::new(0)));
             }
-            info!("q");
             if let Some(KvEvent::Set(args, tx)) = self.pending.remove(&index) {
-                info!("w");
                 if req.seq == args.seq
                     && req.seq > self.last_index[&req.name].load(Ordering::SeqCst)
                 {
-                    info!("get set apply msg: {}, {}", args.key, args.value);
                     self.last_index[&req.name].store(req.seq, Ordering::SeqCst);
                     let reply = self
                         .store
@@ -251,6 +248,10 @@ impl KvRaftInner {
                         })
                         .map_err(|e| Status::internal(e.to_string()));
                     return tx.send(reply).unwrap_or(());
+                } else {
+                    return tx
+                        .send(Err(Status::already_exists("Duplicated Request")))
+                        .unwrap_or(());
                 }
             }
         }
@@ -274,6 +275,10 @@ impl KvRaftInner {
                         })
                         .map_err(|e| Status::internal(e.to_string()));
                     tx.send(reply).unwrap_or(());
+                } else {
+                    return tx
+                        .send(Err(Status::already_exists("Duplicated Request")))
+                        .unwrap_or(());
                 }
             }
         }
@@ -297,6 +302,10 @@ impl KvRaftInner {
                         })
                         .map_err(|e| Status::internal(e.to_string()));
                     tx.send(reply).unwrap_or(());
+                } else {
+                    return tx
+                        .send(Err(Status::already_exists("Duplicated Request")))
+                        .unwrap_or(());
                 }
             }
         }

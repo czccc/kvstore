@@ -10,6 +10,7 @@ extern crate log;
 mod backend;
 mod client;
 mod common;
+mod config;
 mod error;
 mod raft;
 mod rpc;
@@ -25,7 +26,7 @@ pub use rpc::kvs_service::*;
 pub use server::{KvsServer, KvsServerBuilder};
 // pub use thread_pool::{NaiveThreadPool, RayonThreadPool, ShareQueueThreadPool, ThreadPool};
 // pub use thread_pool;
-pub use raft::{FilePersister, KvRaftNode, Persister, RaftNode};
+pub use raft::{FilePersister, KvRaftNode, Persister, RaftConfig, RaftNode};
 
 /// preclude
 pub mod preclude {

@@ -1,4 +1,4 @@
-use kvs::preclude::*;
+use kvs::{preclude::*, RaftConfig};
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, process::exit};
 use structopt::StructOpt;
@@ -63,23 +63,13 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     let opt: Opt = Opt::from_args();
-    let addrs = vec![
-        (1_usize, "http://127.0.0.1:5001".to_string()),
-        (2, "http://127.0.0.1:5002".to_string()),
-        (3, "http://127.0.0.1:5003".to_string()),
-    ];
-    let handles = addrs
-        .into_iter()
-        .map(|(_me, addr)| {
-            tokio::task::spawn(async move { KvRpcClient::connect(addr).await.unwrap() })
-        })
-        .map(|res| res)
-        .collect::<Vec<_>>();
-    let mut clients = Vec::new();
-    for client in handles {
-        let client = client.await.unwrap();
-        clients.push(client);
-    }
+
+    let mut config = RaftConfig::new();
+    config.add_raft_node("127.0.0.1:5001".parse().unwrap(), None);
+    config.add_raft_node("127.0.0.1:5002".parse().unwrap(), None);
+    config.add_raft_node("127.0.0.1:5003".parse().unwrap(), None);
+    let clients = config.build_kv_raft_clients();
+
     match opt.cmd {
         Command::Get { key, addr } => {
             let name = addr.to_string();

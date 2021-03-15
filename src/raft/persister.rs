@@ -67,6 +67,13 @@ impl FilePersister {
     pub fn new() -> Self {
         Self::default()
     }
+    pub fn with_path(path: PathBuf) -> Self {
+        std::fs::create_dir(path.clone()).unwrap_or(());
+        let mut per = Self::default();
+        per.raft_state = path.clone().join(per.raft_state);
+        per.snapshot = path.clone().join(per.snapshot);
+        per
+    }
 }
 
 impl Persister for FilePersister {
