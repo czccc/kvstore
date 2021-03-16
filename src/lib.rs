@@ -23,10 +23,14 @@ pub use client::KvsClient;
 pub use common::{Request, Response};
 pub use error::{KvError, Result};
 pub use rpc::kvs_service::*;
+pub use rpc::raft_service::*;
 pub use server::{KvsServer, KvsServerBuilder};
 // pub use thread_pool::{NaiveThreadPool, RayonThreadPool, ShareQueueThreadPool, ThreadPool};
 // pub use thread_pool;
-pub use raft::{FilePersister, KvRaftNode, Persister, RaftConfig, RaftNode};
+pub use raft::{
+    FilePersister, KvRaftClient, KvRaftClientBuilder, KvRaftNode, KvRaftServer,
+    KvRaftServerBuilder, Persister, RaftNode,
+};
 
 /// preclude
 pub mod preclude {

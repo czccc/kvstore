@@ -317,6 +317,7 @@ pub enum KvEvent {
     Set(SetRequest, Sender<Result<SetReply, Status>>),
     Get(GetRequest, Sender<Result<GetReply, Status>>),
     Remove(RemoveRequest, Sender<Result<RemoveReply, Status>>),
+    Seq(String, Sender<u64>),
 }
 
 impl Stream for KvRaftInner {
@@ -340,6 +341,15 @@ impl Stream for KvRaftInner {
                     }
                     KvEvent::Remove(args, tx) => {
                         self.handle_remove(args, tx);
+                        Poll::Ready(Some(()))
+                    }
+                    KvEvent::Seq(name, tx) => {
+                        let seq = self
+                            .last_index
+                            .get(&name)
+                            .map(|v| v.load(Ordering::SeqCst))
+                            .unwrap_or(0);
+                        tx.send(seq).unwrap();
                         Poll::Ready(Some(()))
                     }
                 };
@@ -435,5 +445,21 @@ impl KvRpc for KvRaftNode {
         rx.await
             .unwrap_or_else(|e| Err(Status::cancelled(e.to_string())))
             .map(|reply| Response::new(reply))
+    }
+    async fn init(
+        &self,
+        req: Request<SeqMessage>,
+    ) -> std::result::Result<Response<SeqMessage>, Status> {
+        let req = req.into_inner();
+        let (tx, rx) = channel();
+        self.sender
+            .send(KvEvent::Seq(req.name.clone(), tx))
+            .unwrap();
+        let seq = rx.await.unwrap();
+        let reply = SeqMessage {
+            name: req.name,
+            seq,
+        };
+        Ok(Response::new(reply))
     }
 }

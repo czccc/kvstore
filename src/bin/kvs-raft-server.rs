@@ -14,8 +14,7 @@ const DEFAULT_ADDR: &str = "127.0.0.1:4000";
 /// Default Engine tag file
 const ENGINE_TAG_FILE: &str = ".engine";
 
-use kvs::{preclude::*, RaftConfig};
-use tonic::transport::Server;
+use kvs::preclude::*;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -97,38 +96,11 @@ async fn main() -> Result<()> {
     info!("Key Value Store Raft Server");
     info!("  Version : {}", env!("CARGO_PKG_VERSION"));
 
-    let mut config = RaftConfig::new();
-    config.set_engine(opt.engine.clone());
-    config.add_raft_node("127.0.0.1:5001".parse().unwrap(), Some(root_path.join("1")));
-    config.add_raft_node("127.0.0.1:5002".parse().unwrap(), Some(root_path.join("2")));
-    config.add_raft_node("127.0.0.1:5003".parse().unwrap(), Some(root_path.join("3")));
-
-    let servers = config.build_kv_raft_servers();
-
-    let handles = servers
-        .into_iter()
-        .map(|(rf, kvrf, addr)| {
-            let threaded_rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            std::thread::spawn(move || {
-                threaded_rt.block_on(async move {
-                    Server::builder()
-                        .add_service(RaftRpcServer::new(rf))
-                        .add_service(KvRpcServer::new(kvrf))
-                        .serve(addr)
-                        .await
-                        .map_err(|e| KvError::StringError(e.to_string()))
-                        .unwrap();
-                });
-            })
-        })
-        .collect::<Vec<_>>();
-
-    for handle in handles {
-        handle.join().unwrap();
-    }
-
-    Ok(())
+    let servers = kvs::KvRaftServer::builder()
+        .set_engine(opt.engine.clone())
+        .add_node("127.0.0.1:5001".parse().unwrap(), root_path.join("1"))
+        .add_node("127.0.0.1:5002".parse().unwrap(), root_path.join("2"))
+        .add_node("127.0.0.1:5003".parse().unwrap(), root_path.join("3"))
+        .build();
+    servers.start()
 }

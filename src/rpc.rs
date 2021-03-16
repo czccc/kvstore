@@ -5,7 +5,8 @@ pub mod kvs_service {
     pub use include::kv_rpc_client::KvRpcClient;
     pub use include::kv_rpc_server::{KvRpc, KvRpcServer};
     pub use include::{
-        GetReply, GetRequest, RemoveReply, RemoveRequest, SetReply, SetRequest, Snapshot,
+        GetReply, GetRequest, RemoveReply, RemoveRequest, SeqMessage, SetReply, SetRequest,
+        Snapshot,
     };
 }
 

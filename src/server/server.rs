@@ -66,4 +66,12 @@ impl KvRpc for KvsServer {
             .map(|reply| Response::new(reply))
             .map_err(|e| Status::unknown(e.to_string()))
     }
+
+    async fn init(
+        &self,
+        req: Request<SeqMessage>,
+    ) -> std::result::Result<Response<SeqMessage>, Status> {
+        let req = req.into_inner();
+        Ok(Response::new(req))
+    }
 }

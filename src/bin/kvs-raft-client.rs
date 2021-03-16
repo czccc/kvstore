@@ -1,10 +1,18 @@
-use kvs::{preclude::*, RaftConfig};
+use kvs::preclude::*;
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, process::exit};
 use structopt::StructOpt;
-use tonic::{Code, Request};
 
-const DEFAULT_ADDR: &str = "127.0.0.1:4000";
+#[macro_use]
+extern crate lazy_static;
+
+lazy_static! {
+    static ref DEFAULT_ADDRS: Vec<SocketAddr> = vec![
+        "127.0.0.1:5001".parse().unwrap(),
+        "127.0.0.1:5002".parse().unwrap(),
+        "127.0.0.1:5003".parse().unwrap()
+    ];
+}
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -14,7 +22,7 @@ const DEFAULT_ADDR: &str = "127.0.0.1:4000";
     author = env!("CARGO_PKG_AUTHORS")
 )]
 struct Opt {
-    #[structopt(subcommand)] // Note that we mark a field as a subcommand
+    #[structopt(flatten)] // Note that we mark a field as a subcommand
     cmd: Command,
 }
 
@@ -28,9 +36,10 @@ enum Command {
             name = "IP-PORT",
             short = "a",
             long = "addr",
-            default_value = DEFAULT_ADDR
+            // default_value = DEFAULT_ADDR,
+            // parse(try_from_str = parse_str_to_vec)
         )]
-        addr: SocketAddr,
+        addrs: Vec<SocketAddr>,
     },
     #[structopt(about = "Set the value of a string key to a string")]
     Set {
@@ -42,9 +51,10 @@ enum Command {
             name = "IP-PORT",
             short = "a",
             long = "addr",
-            default_value = DEFAULT_ADDR
+            // default_value = DEFAULT_ADDR,
+            // parse(try_from_str = parse_str_to_vec)
         )]
-        addr: SocketAddr,
+        addrs: Vec<SocketAddr>,
     },
     #[structopt(about = "Remove a given key")]
     Rm {
@@ -54,99 +64,62 @@ enum Command {
             name = "IP-PORT",
             short = "a",
             long = "addr",
-            default_value = DEFAULT_ADDR
+            // default_value = DEFAULT_ADDR,
+            // parse(try_from_str = parse_str_to_vec)
         )]
-        addr: SocketAddr,
+        addrs: Vec<SocketAddr>,
     },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let opt: Opt = Opt::from_args();
-
-    let mut config = RaftConfig::new();
-    config.add_raft_node("127.0.0.1:5001".parse().unwrap(), None);
-    config.add_raft_node("127.0.0.1:5002".parse().unwrap(), None);
-    config.add_raft_node("127.0.0.1:5003".parse().unwrap(), None);
-    let clients = config.build_kv_raft_clients();
+    println!("{:?}", opt);
 
     match opt.cmd {
-        Command::Get { key, addr } => {
-            let name = addr.to_string();
-            let seq = 3;
-            let request = GetRequest { key, name, seq };
-            loop {
-                for mut client in clients.clone() {
-                    let request = Request::new(request.clone());
-                    let response = client.get(request).await;
-                    match response {
-                        Ok(result) => {
-                            println!("{}", result.into_inner().message);
-                            exit(0)
-                        }
-                        Err(e) if e.code() == Code::PermissionDenied => {
-                            continue;
-                        }
-                        Err(e) => {
-                            eprintln!("{}", e);
-                            exit(1);
-                        }
-                    }
+        Command::Get { key, mut addrs } => {
+            if addrs.is_empty() {
+                addrs = (*DEFAULT_ADDRS).to_owned();
+            }
+            let mut client = kvs::KvRaftClient::builder().add_batch_node(addrs).build();
+            match client.get(key).await {
+                Ok(value) => println!("{}", value),
+                Err(e) => {
+                    eprintln!("{}", e);
+                    exit(1);
                 }
             }
         }
-        Command::Set { key, value, addr } => {
-            let name = addr.to_string();
-            let seq = 2;
-            let request = SetRequest {
-                key,
-                value,
-                name,
-                seq,
-            };
-            loop {
-                for mut client in clients.clone() {
-                    let request = Request::new(request.clone());
-                    let response = client.set(request).await;
-                    match response {
-                        Ok(result) => {
-                            println!("{}", result.into_inner().message);
-                            exit(0)
-                        }
-                        Err(e) if e.code() == Code::PermissionDenied => {
-                            continue;
-                        }
-                        Err(e) => {
-                            eprintln!("{}", e);
-                            exit(1);
-                        }
-                    }
+        Command::Set {
+            key,
+            value,
+            mut addrs,
+        } => {
+            if addrs.is_empty() {
+                addrs = (*DEFAULT_ADDRS).to_owned();
+            }
+            let mut client = kvs::KvRaftClient::builder().add_batch_node(addrs).build();
+            match client.set(key, value).await {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("{}", e);
+                    exit(1);
                 }
             }
         }
-        Command::Rm { key, addr } => {
-            let name = addr.to_string();
-            let seq = 1;
-            let request = RemoveRequest { key, name, seq };
-            loop {
-                for mut client in clients.clone() {
-                    let request = Request::new(request.clone());
-                    let response = client.remove(request).await;
-                    match response {
-                        Ok(result) => {
-                            println!("{}", result.into_inner().message);
-                            exit(0)
-                        }
-                        Err(e) if e.code() == Code::PermissionDenied => {
-                            continue;
-                        }
-                        Err(e) => {
-                            eprintln!("{}", e);
-                            exit(1);
-                        }
-                    }
+        Command::Rm { key, mut addrs } => {
+            if addrs.is_empty() {
+                addrs = (*DEFAULT_ADDRS).to_owned();
+            }
+            let mut client = kvs::KvRaftClient::builder().add_batch_node(addrs).build();
+            match client.remove(key).await {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("{}", e);
+                    exit(1);
                 }
             }
         }
     };
+    Ok(())
 }
