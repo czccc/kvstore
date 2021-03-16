@@ -907,6 +907,7 @@ impl Stream for RaftInner {
     }
 }
 
+/// RaftNode can replicate log entries to all raft nodes
 #[derive(Clone)]
 pub struct RaftNode {
     // Your code here.
@@ -963,6 +964,7 @@ impl RaftNode {
         }
     }
 
+    /// start a command that can encode to Bytes
     pub fn start<M>(&self, command: &M) -> Result<(u64, u64)>
     where
         M: Message,
@@ -996,6 +998,7 @@ impl RaftNode {
         }
     }
 
+    /// receive a snapshot and save it.
     pub fn start_snapshot(&self, snapshot: Vec<u8>, last_applied: u64) {
         self.sender
             .send(RaftEvent::StartSnapshot(snapshot, last_applied))
@@ -1014,6 +1017,7 @@ impl RaftNode {
         self.is_leader.load(Ordering::SeqCst)
     }
 
+    /// Shutdown this node
     pub fn kill(&self) {
         let _ = self.sender.send(RaftEvent::Shutdown);
     }

@@ -10,7 +10,6 @@ const DEFAULT_ADDR: &str = "127.0.0.1:4000";
 const ENGINE_TAG_FILE: &str = ".engine";
 
 use kvs::preclude::*;
-use tonic::transport::Server;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -21,14 +20,14 @@ use tonic::transport::Server;
 )]
 struct Opt {
     #[structopt(
-        name = "IP-PORT",
-        short = "a",
-        long = "addr",
-        default_value = DEFAULT_ADDR
+        name = "Server Kind",
+        short = "s",
+        long = "server",
+        default_value = "basic"
     )]
-    addr: SocketAddr,
+    server: String,
     #[structopt(
-        name = "ENGINE-NAME",
+        name = "Engine Name",
         short = "e",
         long = "engine",
         default_value = "auto",
@@ -36,13 +35,12 @@ struct Opt {
     )]
     engine: String,
     #[structopt(
-        name = "THREADPOOL-NAME",
-        short = "t",
-        long = "threadpool",
-        default_value = "rayon",
-        parse(try_from_str = parse_str_to_pool)
+        name = "IP-PORT",
+        short = "a",
+        long = "addr",
+        default_value = DEFAULT_ADDR
     )]
-    thread_pool: String,
+    addrs: Vec<SocketAddr>,
 }
 
 fn parse_str_to_engine(src: &str) -> Result<String> {
@@ -50,18 +48,6 @@ fn parse_str_to_engine(src: &str) -> Result<String> {
     if src == "auto" {
         Ok(previous.unwrap_or("kvs".to_string()))
     } else if previous.is_err() || src == previous.unwrap() {
-        Ok(src.to_string())
-    } else {
-        Err(KvError::ParserError(src.to_string()))
-    }
-}
-
-fn parse_str_to_pool(src: &str) -> Result<String> {
-    if src == "rayon" {
-        Ok(src.to_string())
-    } else if src == "share" {
-        Ok(src.to_string())
-    } else if src == "naive" {
         Ok(src.to_string())
     } else {
         Err(KvError::ParserError(src.to_string()))
@@ -87,24 +73,15 @@ async fn main() -> Result<()> {
 
     info!("Key Value Store Server");
     info!("  Version : {}", env!("CARGO_PKG_VERSION"));
-    info!("  IP-PORT : {}", opt.addr);
+    info!("  IP-PORT : {:?}", opt.addrs);
     info!("  Engine  : {}", opt.engine);
-    info!("  TdPool  : {}", opt.thread_pool);
 
-    let addr = opt.addr;
+    let server = KvsServer::builder()
+        .set_server(opt.server)
+        .set_engine(opt.engine)
+        .set_root_path(current_dir().unwrap())
+        .add_batch_nodes(opt.addrs);
 
-    let server = KvsServerBuilder::new()
-        .engine(opt.engine)
-        .path(current_dir().unwrap())
-        .build()?;
-
-    // let server = KvRpcServer::new(server);
-    // server.run(opt.addr)?;
-    Server::builder()
-        .add_service(KvRpcServer::new(server))
-        .serve(addr)
-        .await
-        .map_err(|e| KvError::StringError(e.to_string()))?;
-
-    Ok(())
+    let server = server.build();
+    server.start()
 }

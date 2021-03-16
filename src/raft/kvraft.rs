@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{rpc::kvs_service::*, EngineKind};
+use crate::{rpc::kvs_service::*, EngineKind, KvsEngine};
 use prost::Message;
 use tonic::{Request, Response, Status};
 
@@ -372,6 +372,7 @@ impl Stream for KvRaftInner {
     }
 }
 
+/// A KvRaftNode that owned a store engine and can handle RPC request from client
 #[derive(Clone)]
 pub struct KvRaftNode {
     handle: Arc<Mutex<thread::JoinHandle<()>>>,
@@ -379,6 +380,7 @@ pub struct KvRaftNode {
 }
 
 impl KvRaftNode {
+    /// Create a new KvRaftNode
     pub fn new(
         rf: raft::RaftNode,
         store: EngineKind,

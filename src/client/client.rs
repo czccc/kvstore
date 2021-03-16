@@ -1,10 +1,11 @@
 use std::{net::SocketAddr, time::Duration};
 
-use tonic::{transport::Channel, Request};
+use tonic::{transport::Channel, Code, Request};
 
 use crate::preclude::*;
 
-pub struct KvRaftClient {
+/// A KvsClient that support communicate with KvsServer
+pub struct KvsClient {
     name: String,
     seq: u64,
     num_servers: usize,
@@ -13,10 +14,16 @@ pub struct KvRaftClient {
     timeout: Duration,
 }
 
-impl KvRaftClient {
-    pub fn builder() -> KvRaftClientBuilder {
-        KvRaftClientBuilder::default()
+impl KvsClient {
+    /// return a new client which only request one server
+    pub fn new(addr: SocketAddr) -> KvsClient {
+        KvsClientBuilder::default().add_node(addr).build()
     }
+    /// return a new Builder to set some fields
+    pub fn builder() -> KvsClientBuilder {
+        KvsClientBuilder::default()
+    }
+    /// Send a request to server and get the max seq number of this client's name
     pub async fn init(&mut self) -> Result<()> {
         let req = SeqMessage {
             name: self.name.clone(),
@@ -47,7 +54,7 @@ impl KvRaftClient {
         let req = SetRequest {
             key,
             value,
-            name: String::from("kvs"),
+            name: self.name.clone(),
             seq: 1,
         };
         for _retries in 0..self.retries {
@@ -73,7 +80,7 @@ impl KvRaftClient {
         }
         let req = GetRequest {
             key,
-            name: String::from("kvs"),
+            name: self.name.clone(),
             seq: 1,
         };
         for _retries in 0..self.retries {
@@ -99,7 +106,7 @@ impl KvRaftClient {
         }
         let req = RemoveRequest {
             key,
-            name: String::from("kvs"),
+            name: self.name.clone(),
             seq: 1,
         };
         for _retries in 0..self.retries {
@@ -111,6 +118,7 @@ impl KvRaftClient {
                         // println!("{}", res.message);
                         return Ok(());
                     }
+                    Ok(Err(e)) if e.code() == Code::NotFound => return Err(KvError::KeyNotFound),
                     Ok(Err(_e)) => continue,
                     Err(_e) => continue,
                 }
@@ -120,7 +128,8 @@ impl KvRaftClient {
     }
 }
 
-pub struct KvRaftClientBuilder {
+/// A Client builder
+pub struct KvsClientBuilder {
     name: String,
     seq: u64,
     info: Vec<SocketAddr>,
@@ -128,7 +137,7 @@ pub struct KvRaftClientBuilder {
     timeout: Duration,
 }
 
-impl Default for KvRaftClientBuilder {
+impl Default for KvsClientBuilder {
     fn default() -> Self {
         Self {
             name: String::from("client"),
@@ -140,32 +149,39 @@ impl Default for KvRaftClientBuilder {
     }
 }
 
-impl KvRaftClientBuilder {
-    pub fn add_node(mut self, addr: SocketAddr) -> KvRaftClientBuilder {
+impl KvsClientBuilder {
+    /// add a new server addr
+    pub fn add_node(mut self, addr: SocketAddr) -> KvsClientBuilder {
         self.info.push(addr);
         self
     }
-    pub fn add_batch_node(mut self, mut addrs: Vec<SocketAddr>) -> KvRaftClientBuilder {
+    /// add a batch of server addr
+    pub fn add_batch_node(mut self, mut addrs: Vec<SocketAddr>) -> KvsClientBuilder {
         self.info.append(&mut addrs);
         self
     }
-    pub fn set_seq(mut self, seq: u64) -> KvRaftClientBuilder {
+    /// set client seq
+    pub fn set_seq(mut self, seq: u64) -> KvsClientBuilder {
         self.seq = seq;
         self
     }
-    pub fn set_name(mut self, name: String) -> KvRaftClientBuilder {
+    /// set client name
+    pub fn set_name(mut self, name: String) -> KvsClientBuilder {
         self.name = name;
         self
     }
-    pub fn set_retries(mut self, retries: usize) -> KvRaftClientBuilder {
+    /// set client retries times
+    pub fn set_retries(mut self, retries: usize) -> KvsClientBuilder {
         self.retries = retries;
         self
     }
-    pub fn set_timeout(mut self, timeout: Duration) -> KvRaftClientBuilder {
+    /// set rpc timeout
+    pub fn set_timeout(mut self, timeout: Duration) -> KvsClientBuilder {
         self.timeout = timeout;
         self
     }
-    pub fn build(self) -> KvRaftClient {
+    /// build the client
+    pub fn build(self) -> KvsClient {
         let servers: Vec<KvRpcClient<Channel>> = self
             .info
             .iter()
@@ -174,7 +190,7 @@ impl KvRaftClientBuilder {
             .map(|res| KvRpcClient::new(res))
             .collect();
 
-        KvRaftClient {
+        KvsClient {
             name: self.name,
             seq: self.seq,
             num_servers: servers.len(),

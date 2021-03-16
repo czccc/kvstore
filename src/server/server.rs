@@ -1,77 +1,29 @@
-use crate::rpc::kvs_service::*;
-use crate::*;
-use std::sync::Arc;
-use tonic::{Request, Response, Status};
+use super::*;
+use crate::Result;
 
-/// Kvs Server
-#[derive(Clone)]
+pub(crate) enum ServerKind {
+    Basic(KvsBasicServer),
+    Raft(KvRaftServer),
+}
+
+/// A server that used to handle Rpc request from clients
 pub struct KvsServer {
-    store: Arc<EngineKind>,
+    server: ServerKind,
 }
 
 impl KvsServer {
-    /// Construct a new Kvs Server from given engine at specific path.
-    /// Use `run()` to listen on given addr.
-    pub fn new(store: EngineKind) -> Result<Self> {
-        Ok(KvsServer {
-            store: Arc::new(store),
-        })
+    pub(crate) fn new(server: ServerKind) -> KvsServer {
+        KvsServer { server }
     }
-}
-
-#[tonic::async_trait]
-impl KvRpc for KvsServer {
-    async fn set(
-        &self,
-        req: Request<SetRequest>,
-    ) -> std::result::Result<Response<SetReply>, Status> {
-        let req = req.into_inner();
-        self.store
-            .set(req.key.clone(), req.value.clone())
-            .map(|_| SetReply {
-                message: "OK".to_string(),
-                name: req.name,
-                seq: req.seq,
-            })
-            .map(|reply| Response::new(reply))
-            .map_err(|_| Status::unknown("Failed"))
+    /// return a builder to configure the server
+    pub fn builder() -> KvsServerBuilder {
+        KvsServerBuilder::default()
     }
-    async fn get(
-        &self,
-        req: Request<GetRequest>,
-    ) -> std::result::Result<Response<GetReply>, Status> {
-        let req = req.into_inner();
-        self.store
-            .get(req.key.clone())
-            .map(|value| GetReply {
-                message: value.unwrap_or("Key not found".to_string()),
-                name: req.name,
-                seq: req.seq,
-            })
-            .map(|reply| Response::new(reply))
-            .map_err(|e| Status::unknown(e.to_string()))
-    }
-    async fn remove(
-        &self,
-        req: Request<RemoveRequest>,
-    ) -> std::result::Result<Response<RemoveReply>, Status> {
-        let req = req.into_inner();
-        self.store
-            .remove(req.key.clone())
-            .map(|_| RemoveReply {
-                message: "OK".to_string(),
-                name: req.name,
-                seq: req.seq,
-            })
-            .map(|reply| Response::new(reply))
-            .map_err(|e| Status::unknown(e.to_string()))
-    }
-
-    async fn init(
-        &self,
-        req: Request<SeqMessage>,
-    ) -> std::result::Result<Response<SeqMessage>, Status> {
-        let req = req.into_inner();
-        Ok(Response::new(req))
+    /// start RPC process
+    pub fn start(self) -> Result<()> {
+        match self.server {
+            ServerKind::Basic(s) => s.start(),
+            ServerKind::Raft(s) => s.start(),
+        }
     }
 }

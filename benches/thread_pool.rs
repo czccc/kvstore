@@ -83,14 +83,20 @@ fn thread_pool_write_bench(c: &mut Criterion) {
                                     let _ = receiver.recv(); // wait for main thread to finish
                                     child.kill().expect("server exited before killed");
                                 });
+                                let threaded_rt = tokio::runtime::Builder::new_multi_thread()
+                                    .enable_all()
+                                    .build()
+                                    .unwrap();
                                 thread::sleep(Duration::from_secs(1));
 
                                 let start = Instant::now();
                                 for i in 0..s.key.len() {
                                     let mut client =
                                         KvsClient::new("127.0.0.1:5000".parse().unwrap());
-                                    client
-                                        .set(s.key[i].to_owned(), s.value[i].to_owned())
+                                    threaded_rt
+                                        .block_on(
+                                            client.set(s.key[i].to_owned(), s.value[i].to_owned()),
+                                        )
                                         .expect("Unable set");
                                 }
                                 let ret = start.elapsed();
@@ -142,13 +148,19 @@ fn thread_pool_get_bench(c: &mut Criterion) {
                                     let _ = receiver.recv(); // wait for main thread to finish
                                     child.kill().expect("server exited before killed");
                                 });
+                                let threaded_rt = tokio::runtime::Builder::new_multi_thread()
+                                    .enable_all()
+                                    .build()
+                                    .unwrap();
                                 thread::sleep(Duration::from_secs(1));
 
                                 for i in 0..s.key.len() {
                                     let mut client =
                                         KvsClient::new("127.0.0.1:5000".parse().unwrap());
-                                    client
-                                        .set(s.key[i].to_owned(), s.value[i].to_owned())
+                                    threaded_rt
+                                        .block_on(
+                                            client.set(s.key[i].to_owned(), s.value[i].to_owned()),
+                                        )
                                         .expect("Unable set");
                                 }
 
@@ -156,7 +168,9 @@ fn thread_pool_get_bench(c: &mut Criterion) {
                                 for i in 0..s.key.len() {
                                     let mut client =
                                         KvsClient::new("127.0.0.1:5000".parse().unwrap());
-                                    client.get(s.key[i].to_owned()).expect("Unable get");
+                                    threaded_rt
+                                        .block_on(client.get(s.key[i].to_owned()))
+                                        .expect("Unable get");
                                 }
                                 let ret = start.elapsed();
 

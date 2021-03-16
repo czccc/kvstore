@@ -1,6 +1,7 @@
 use std::io;
 
 use thiserror::Error;
+use tonic::Status;
 
 /// KvStore Error
 #[derive(Error, Debug)]
@@ -14,6 +15,7 @@ pub enum KvError {
     /// Serialization or deserialization error.
     #[error("{0}")]
     Serde(#[from] serde_json::Error),
+    /// RPC Error
     #[error("{0}")]
     Rpc(#[from] tonic::Status),
     /// Unknown Engine
@@ -32,3 +34,18 @@ pub enum KvError {
 
 /// KvStore Error Result
 pub type Result<T> = std::result::Result<T, KvError>;
+
+impl From<KvError> for Status {
+    fn from(err: KvError) -> Self {
+        match err {
+            KvError::KeyNotFound => Status::not_found("Key not found"),
+            KvError::Io(e) => Status::internal(e.to_string()),
+            KvError::Serde(e) => Status::internal(e.to_string()),
+            KvError::Rpc(e) => e,
+            KvError::ParserError(e) => Status::internal(e.to_string()),
+            KvError::StringError(e) => Status::internal(e.to_string()),
+            KvError::NotLeader => Status::permission_denied("Not Leader"),
+            KvError::Unknown => Status::unknown("Unknown Error"),
+        }
+    }
+}

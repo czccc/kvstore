@@ -17,13 +17,15 @@ pub trait KvsEngine: Clone + Send + 'static {
     fn set(&self, key: String, value: String) -> Result<()>;
     /// Get the string value of a string key. If the key does not exist, return None.
     ///
-    ///Return an error if the value is not read successfully.
+    /// Return an error if the value is not read successfully.
     fn get(&self, key: String) -> Result<Option<String>>;
-    ///Remove a given string key.
+    /// Remove a given string key.
     ///
-    ///Return an error if the key does not exit or value is not read successfully.
+    /// Return an error if the key does not exit or value is not read successfully.
     fn remove(&self, key: String) -> Result<()>;
+    /// Export two `Vec` include all key and all value to backup KvsEngine
     fn export(&self) -> Result<(Vec<String>, Vec<String>)>;
+    /// From two `Vec` include all key and all value to restore KvsEngine
     fn import(&self, data: (Vec<String>, Vec<String>)) -> Result<()>;
 }
 
@@ -37,35 +39,35 @@ pub enum EngineKind {
     sled(KvSled),
 }
 
-impl EngineKind {
+impl KvsEngine for EngineKind {
     /// a
-    pub fn set(&self, key: String, value: String) -> Result<()> {
+    fn set(&self, key: String, value: String) -> Result<()> {
         match self {
             EngineKind::kvs(store) => store.set(key, value),
             EngineKind::sled(store) => store.set(key, value),
         }
     }
     /// a
-    pub fn get(&self, key: String) -> Result<Option<String>> {
+    fn get(&self, key: String) -> Result<Option<String>> {
         match self {
             EngineKind::kvs(store) => store.get(key),
             EngineKind::sled(store) => store.get(key),
         }
     }
     /// a
-    pub fn remove(&self, key: String) -> Result<()> {
+    fn remove(&self, key: String) -> Result<()> {
         match self {
             EngineKind::kvs(store) => store.remove(key),
             EngineKind::sled(store) => store.remove(key),
         }
     }
-    pub fn export(&self) -> Result<(Vec<String>, Vec<String>)> {
+    fn export(&self) -> Result<(Vec<String>, Vec<String>)> {
         match self {
             EngineKind::kvs(store) => store.export(),
             EngineKind::sled(store) => store.export(),
         }
     }
-    pub fn import(&self, data: (Vec<String>, Vec<String>)) -> Result<()> {
+    fn import(&self, data: (Vec<String>, Vec<String>)) -> Result<()> {
         match self {
             EngineKind::kvs(store) => store.import(data),
             EngineKind::sled(store) => store.import(data),

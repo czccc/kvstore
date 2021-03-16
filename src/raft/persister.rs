@@ -12,10 +12,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Persister defined how raft state and snapshot can persist to disk
 pub trait Persister: Send + Sync + 'static {
+    /// get the persisted state
     fn raft_state(&self) -> Vec<u8>;
+    /// save the state to disk
     fn save_raft_state(&self, state: Vec<u8>);
+    /// save the state and snapshot to disk
     fn save_state_and_snapshot(&self, state: Vec<u8>, snapshot: Vec<u8>);
+    /// get the persisted snapshot
     fn snapshot(&self) -> Vec<u8>;
 }
 
@@ -49,6 +54,7 @@ impl<T: ?Sized + Sync + Persister> Persister for Arc<T> {
     }
 }
 
+/// FilePersister is a raft persister that save all data to files
 pub struct FilePersister {
     raft_state: PathBuf,
     snapshot: PathBuf,
@@ -64,9 +70,11 @@ impl Default for FilePersister {
 }
 
 impl FilePersister {
+    /// Create a new FilePersister
     pub fn new() -> Self {
         Self::default()
     }
+    /// Create a new FilePersister with given path
     pub fn with_path(path: PathBuf) -> Self {
         std::fs::create_dir(path.clone()).unwrap_or(());
         let mut per = Self::default();

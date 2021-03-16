@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
     info!("Key Value Store Raft Server");
     info!("  Version : {}", env!("CARGO_PKG_VERSION"));
 
-    let servers = kvs::KvRaftServer::builder()
+    let servers = KvsServer::builder()
         .set_engine(opt.engine.clone())
         .add_node("127.0.0.1:5001".parse().unwrap(), root_path.join("1"))
         .add_node("127.0.0.1:5002".parse().unwrap(), root_path.join("2"))
