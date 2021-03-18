@@ -7,6 +7,7 @@ use crate::preclude::*;
 /// A KvsClient that support communicate with KvsServer
 pub struct KvsClient {
     name: String,
+    ts: Option<u64>,
     seq: u64,
     num_servers: usize,
     servers: Vec<KvRpcClient<Channel>>,
@@ -24,19 +25,18 @@ impl KvsClient {
         KvsClientBuilder::default()
     }
     /// Send a request to server and get the max seq number of this client's name
-    pub async fn init(&mut self) -> Result<()> {
-        let req = SeqMessage {
+    pub async fn get_timestamp(&mut self) -> Result<()> {
+        let req = TsRequest {
             name: self.name.clone(),
-            seq: 0,
         };
         for _retries in 0..self.retries {
             for client in self.servers.iter_mut() {
-                let res = client.init(Request::new(req.clone()));
+                let res = client.get_timestamp(Request::new(req.clone()));
                 match tokio::time::timeout(self.timeout, res).await {
                     Ok(Ok(res)) => {
                         let res = res.into_inner();
                         // info!("{}", res.message);
-                        self.seq = res.seq;
+                        self.ts = Some(res.ts);
                         return Ok(());
                     }
                     Ok(Err(_e)) => continue,
@@ -48,9 +48,7 @@ impl KvsClient {
     }
     /// Send set command to server, and process the response.
     pub async fn set(&mut self, key: String, value: String) -> Result<()> {
-        if self.seq == 0 {
-            self.init().await?;
-        }
+        self.get_timestamp().await.unwrap();
         let req = SetRequest {
             key,
             value,
@@ -75,9 +73,7 @@ impl KvsClient {
     }
     /// Send get command to server, and process the response.
     pub async fn get(&mut self, key: String) -> Result<String> {
-        if self.seq == 0 {
-            self.init().await?;
-        }
+        self.get_timestamp().await.unwrap();
         let req = GetRequest {
             key,
             name: self.name.clone(),
@@ -101,9 +97,7 @@ impl KvsClient {
     }
     /// Send remove command to server, and process the response.
     pub async fn remove(&mut self, key: String) -> Result<()> {
-        if self.seq == 0 {
-            self.init().await?;
-        }
+        self.get_timestamp().await.unwrap();
         let req = RemoveRequest {
             key,
             name: self.name.clone(),
@@ -192,6 +186,7 @@ impl KvsClientBuilder {
 
         KvsClient {
             name: self.name,
+            ts: None,
             seq: self.seq,
             num_servers: servers.len(),
             servers,

@@ -377,6 +377,7 @@ impl Stream for KvRaftInner {
 pub struct KvRaftNode {
     handle: Arc<Mutex<thread::JoinHandle<()>>>,
     sender: UnboundedSender<KvEvent>,
+    ts_oracle: Arc<AtomicU64>,
 }
 
 impl KvRaftNode {
@@ -388,6 +389,7 @@ impl KvRaftNode {
         persister: Arc<dyn persister::Persister>,
         maxraftstate: Option<usize>,
         apply_ch: UnboundedReceiver<ApplyMsg>,
+        ts_oracle: Arc<AtomicU64>,
     ) -> KvRaftNode {
         let (sender, receiver) = unbounded_channel();
         let mut kv_raft =
@@ -409,12 +411,23 @@ impl KvRaftNode {
         KvRaftNode {
             handle: Arc::new(Mutex::new(handle)),
             sender,
+            ts_oracle,
         }
     }
 }
 
 #[tonic::async_trait]
 impl KvRpc for KvRaftNode {
+    async fn get_timestamp(
+        &self,
+        request: Request<TsRequest>,
+    ) -> std::result::Result<Response<TsReply>, Status> {
+        let name = request.into_inner().name;
+        let ts = self.ts_oracle.fetch_add(1, Ordering::SeqCst);
+        let reply = TsReply { name, ts };
+        Ok(tonic::Response::new(reply))
+    }
+
     async fn set(
         &self,
         req: Request<SetRequest>,
@@ -448,20 +461,18 @@ impl KvRpc for KvRaftNode {
             .unwrap_or_else(|e| Err(Status::cancelled(e.to_string())))
             .map(|reply| Response::new(reply))
     }
-    async fn init(
+
+    async fn prewrite(
         &self,
-        req: Request<SeqMessage>,
-    ) -> std::result::Result<Response<SeqMessage>, Status> {
-        let req = req.into_inner();
-        let (tx, rx) = channel();
-        self.sender
-            .send(KvEvent::Seq(req.name.clone(), tx))
-            .unwrap();
-        let seq = rx.await.unwrap();
-        let reply = SeqMessage {
-            name: req.name,
-            seq,
-        };
-        Ok(Response::new(reply))
+        _request: Request<PrewriteRequest>,
+    ) -> std::result::Result<Response<PrewriteReply>, Status> {
+        todo!()
+    }
+
+    async fn commit(
+        &self,
+        _request: Request<CommitRequest>,
+    ) -> std::result::Result<Response<CommitReply>, Status> {
+        todo!()
     }
 }

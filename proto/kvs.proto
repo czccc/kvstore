@@ -3,15 +3,19 @@ syntax = "proto3";
 package kvs;
 
 service KvRpc {
-  rpc init(SeqMessage) returns (SeqMessage) {}
+  rpc get_timestamp(TsRequest) returns (TsReply) {}
   rpc set(SetRequest) returns (SetReply) {}
   rpc get(GetRequest) returns (GetReply) {}
   rpc remove(RemoveRequest) returns (RemoveReply) {}
+  rpc prewrite(PrewriteRequest) returns (PrewriteReply) {}
+  rpc commit(CommitRequest) returns (CommitReply) {}
 }
 
-message SeqMessage {
+message TsRequest { string name = 1; }
+
+message TsReply {
   string name = 1;
-  uint64 seq = 2;
+  uint64 ts = 2;
 }
 
 message SetRequest {
@@ -50,6 +54,30 @@ message RemoveReply {
   string name = 2;
   uint64 seq = 3;
 }
+
+message Write {
+  bytes row = 1;
+  bytes col = 2;
+  bytes value = 3;
+}
+
+message PrewriteRequest {
+  Write w = 1;
+  Write primary = 2;
+  uint64 ts = 3;
+  uint64 seq = 4;
+}
+message PrewriteReply { bool ok = 1; }
+
+message CommitRequest {
+  bool is_primary = 1;
+  Write w = 2;
+  uint64 start_ts = 3;
+  uint64 commit_ts = 4;
+  uint64 seq = 5;
+}
+
+message CommitReply { bool ok = 1; }
 
 message Snapshot {
   repeated string keys = 1;

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::from_utf8};
+use std::{ops::RangeBounds, path::PathBuf, str::from_utf8};
 
 use crate::*;
 
@@ -46,6 +46,28 @@ impl KvsEngine for KvSled {
             Ok(None) => Err(KvError::KeyNotFound),
             Err(_) => Err(KvError::Unknown),
         }
+    }
+    fn range_last(&self, range: impl RangeBounds<String>) -> Result<Option<(String, String)>> {
+        match self.db.range(range).last() {
+            Some(Ok((k, v))) => Ok(Some((
+                from_utf8(k.to_vec().as_ref()).unwrap().to_string(),
+                from_utf8(v.to_vec().as_ref()).unwrap().to_string(),
+            ))),
+            Some(Err(e)) => Err(KvError::StringError(e.to_string())),
+            None => Ok(None),
+        }
+    }
+    fn range_erase(&self, range: impl RangeBounds<String>) -> Result<()> {
+        let keys: Vec<String> = self
+            .db
+            .range(range)
+            .map(|v| v.unwrap())
+            .map(|(key, _cmd)| String::from_utf8(key.to_vec()).unwrap())
+            .collect();
+        for k in keys.into_iter() {
+            self.remove(k)?;
+        }
+        Ok(())
     }
 
     fn export(&self) -> Result<(Vec<String>, Vec<String>)> {

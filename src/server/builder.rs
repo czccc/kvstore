@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{atomic::AtomicU64, Arc},
+};
 
 use tokio::sync::mpsc::unbounded_channel;
 use tonic::transport::Channel;
@@ -96,6 +100,7 @@ impl KvsServerBuilder {
             .map(|node| Channel::from_shared(node).unwrap().connect_lazy().unwrap())
             .map(|res| RaftRpcClient::new(res))
             .collect();
+        let ts_oracle = Arc::new(AtomicU64::new(1));
         let nodes: Vec<(RaftNode, KvRaftNode, SocketAddr)> = self
             .info
             .iter()
@@ -108,7 +113,15 @@ impl KvsServerBuilder {
                     "sled" => EngineKind::sled(KvSled::open(info.path.to_owned()).unwrap()),
                     _unknown => unreachable!(),
                 };
-                let kv_raft = KvRaftNode::new(raft.clone(), store, info.id, per, Some(1024), rx);
+                let kv_raft = KvRaftNode::new(
+                    raft.clone(),
+                    store,
+                    info.id,
+                    per,
+                    Some(1024),
+                    rx,
+                    ts_oracle.clone(),
+                );
                 (raft, kv_raft, info.addr)
             })
             .collect();

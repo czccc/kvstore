@@ -12,7 +12,7 @@ use std::{
     io::BufWriter,
     io::SeekFrom,
     io::{Read, Seek, Write},
-    ops::Range,
+    ops::{Range, RangeBounds},
     path::Path,
     path::PathBuf,
     sync::Arc,
@@ -199,6 +199,29 @@ impl KvsEngine for KvStore {
         }
     }
 
+    fn range_last(&self, range: impl RangeBounds<String>) -> Result<Option<(String, String)>> {
+        let index = self.index.read().unwrap();
+        let key = index.range(range).last().map(|(k, _)| k.to_string());
+        // info!("{:?}", index);
+        match key {
+            Some(key) => {
+                let value = self.get(key.to_string())?.unwrap();
+                Ok(Some((key, value)))
+            }
+            None => Ok(None),
+        }
+    }
+    fn range_erase(&self, range: impl RangeBounds<String>) -> Result<()> {
+        let index = self.index.read().unwrap();
+        let keys: Vec<String> = index
+            .range(range)
+            .map(|(key, _cmd)| key.to_owned())
+            .collect();
+        for k in keys.into_iter() {
+            self.remove(k)?;
+        }
+        Ok(())
+    }
     fn export(&self) -> Result<(Vec<String>, Vec<String>)> {
         let index = self.index.read().unwrap();
         let mut keys = Vec::new();

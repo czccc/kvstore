@@ -1,6 +1,12 @@
 use crate::rpc::kvs_service::*;
 use crate::*;
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 use tonic::{Request, Response, Status};
 
 /// Kvs Server
@@ -8,6 +14,7 @@ use tonic::{Request, Response, Status};
 pub struct KvsBasicServer {
     store: Arc<EngineKind>,
     addr: SocketAddr,
+    ts_oracle: Arc<AtomicU64>,
 }
 
 impl KvsBasicServer {
@@ -17,6 +24,7 @@ impl KvsBasicServer {
         Ok(KvsBasicServer {
             store: Arc::new(store),
             addr,
+            ts_oracle: Arc::new(AtomicU64::new(1)),
         })
     }
     pub fn start(self) -> Result<()> {
@@ -40,6 +48,16 @@ impl KvsBasicServer {
 
 #[tonic::async_trait]
 impl KvRpc for KvsBasicServer {
+    async fn get_timestamp(
+        &self,
+        request: Request<TsRequest>,
+    ) -> std::result::Result<Response<TsReply>, Status> {
+        let name = request.into_inner().name;
+        let ts = self.ts_oracle.fetch_add(1, Ordering::SeqCst);
+        let reply = TsReply { name, ts };
+        Ok(tonic::Response::new(reply))
+    }
+
     async fn set(
         &self,
         req: Request<SetRequest>,
@@ -86,11 +104,17 @@ impl KvRpc for KvsBasicServer {
             .map_err(|e| e.into())
     }
 
-    async fn init(
+    async fn prewrite(
         &self,
-        req: Request<SeqMessage>,
-    ) -> std::result::Result<Response<SeqMessage>, Status> {
-        let req = req.into_inner();
-        Ok(Response::new(req))
+        _request: Request<PrewriteRequest>,
+    ) -> std::result::Result<Response<PrewriteReply>, Status> {
+        todo!()
+    }
+
+    async fn commit(
+        &self,
+        _request: Request<CommitRequest>,
+    ) -> std::result::Result<Response<CommitReply>, Status> {
+        todo!()
     }
 }

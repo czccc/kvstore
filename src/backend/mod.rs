@@ -1,3 +1,5 @@
+use std::ops::RangeBounds;
+
 use crate::Result;
 
 pub use kvsled::KvSled;
@@ -23,6 +25,14 @@ pub trait KvsEngine: Clone + Send + 'static {
     ///
     /// Return an error if the key does not exit or value is not read successfully.
     fn remove(&self, key: String) -> Result<()>;
+    ///Get the last value within a given string key range.
+    ///
+    ///Return an error if the value is not read successfully.
+    fn range_last(&self, range: impl RangeBounds<String>) -> Result<Option<(String, String)>>;
+    ///Erase a batch of value within a given string key range.
+    ///
+    ///Return an error if the value is not erase successfully.
+    fn range_erase(&self, range: impl RangeBounds<String>) -> Result<()>;
     /// Export two `Vec` include all key and all value to backup KvsEngine
     fn export(&self) -> Result<(Vec<String>, Vec<String>)>;
     /// From two `Vec` include all key and all value to restore KvsEngine
@@ -59,6 +69,18 @@ impl KvsEngine for EngineKind {
         match self {
             EngineKind::kvs(store) => store.remove(key),
             EngineKind::sled(store) => store.remove(key),
+        }
+    }
+    fn range_last(&self, range: impl RangeBounds<String>) -> Result<Option<(String, String)>> {
+        match self {
+            EngineKind::kvs(store) => store.range_last(range),
+            EngineKind::sled(store) => store.range_last(range),
+        }
+    }
+    fn range_erase(&self, range: impl RangeBounds<String>) -> Result<()> {
+        match self {
+            EngineKind::kvs(store) => store.range_erase(range),
+            EngineKind::sled(store) => store.range_erase(range),
         }
     }
     fn export(&self) -> Result<(Vec<String>, Vec<String>)> {

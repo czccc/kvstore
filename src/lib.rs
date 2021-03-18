@@ -11,9 +11,11 @@ mod backend;
 mod client;
 mod config;
 mod error;
+mod percolator;
 mod raft;
 mod rpc;
 mod server;
+
 /// Thread Pool
 pub mod thread_pool;
 
@@ -25,6 +27,7 @@ pub use raft::{FilePersister, KvRaftNode, Persister, RaftNode};
 // pub(crate) use rpc::kvs_service::*;
 // #[allow(missing_docs)]
 // pub(crate) use rpc::raft_service::*;
+pub use percolator::{DataValue, Key, LockValue, MultiStore, WriteValue};
 pub use server::{KvsServer, KvsServerBuilder};
 
 /// preclude
