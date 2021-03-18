@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{rpc::kvs_service::*, EngineKind, KvsEngine};
+use crate::{rpc::kvs_service::*, KvRpcError, MultiStore};
 use prost::Message;
 use tonic::{Request, Response, Status};
 
@@ -27,6 +27,8 @@ use tokio_stream::{Stream, StreamExt};
 
 use super::raft;
 
+type RpcResult<T> = std::result::Result<T, KvRpcError>;
+
 pub struct KvRaftInner {
     pub rf: raft::RaftNode,
     me: usize,
@@ -35,9 +37,9 @@ pub struct KvRaftInner {
     apply_ch: UnboundedReceiver<ApplyMsg>,
 
     // DB
-    store: EngineKind,
-    pending: HashMap<u64, KvEvent>,
-    last_index: HashMap<String, Arc<AtomicU64>>,
+    store: MultiStore,
+    pending: HashMap<(u64, u64), KvEvent>,
+    last_index: HashMap<u64, Arc<AtomicU64>>,
     // Stream
     receiver: UnboundedReceiver<KvEvent>,
 }
@@ -55,7 +57,7 @@ impl std::fmt::Display for KvRaftInner {
 
 impl KvRaftInner {
     pub fn new(
-        store: EngineKind,
+        store: MultiStore,
         rf: raft::RaftNode,
         me: usize,
         persister: Arc<dyn persister::Persister>,
@@ -81,141 +83,44 @@ impl KvRaftInner {
     }
 
     fn create_snapshot(&self) -> Vec<u8> {
-        let (keys, values) = self.store.export().unwrap();
-        let snapshot = Snapshot {
-            keys,
-            values,
-            clients: self.last_index.keys().cloned().collect(),
-            seqs: self
-                .last_index
-                .values()
-                .cloned()
-                .map(|v| v.load(Ordering::SeqCst))
-                .collect(),
-        };
-        let mut buf = Vec::new();
-        snapshot.encode(&mut buf).unwrap();
-        buf
+        todo!()
+        // let (keys, values) = self.store.export().unwrap();
+        // let snapshot = Snapshot {
+        //     keys,
+        //     values,
+        //     clients: self.last_index.keys().cloned().collect(),
+        //     seqs: self
+        //         .last_index
+        //         .values()
+        //         .cloned()
+        //         .map(|v| v.load(Ordering::SeqCst))
+        //         .collect(),
+        // };
+        // let mut buf = Vec::new();
+        // snapshot.encode(&mut buf).unwrap();
+        // buf
     }
 
-    fn restore_from_snapshot(&mut self, snapshot: Vec<u8>) {
-        if let Ok(Snapshot {
-            keys,
-            values,
-            clients,
-            seqs,
-        }) = Snapshot::decode(&*snapshot)
-        {
-            self.store.import((keys, values)).unwrap();
-            let last_index: HashMap<String, Arc<AtomicU64>> = clients
-                .into_iter()
-                .zip(seqs.into_iter().map(|v| Arc::new(AtomicU64::new(v))))
-                .collect();
-            self.last_index = last_index;
-        }
+    fn restore_from_snapshot(&mut self, _snapshot: Vec<u8>) {
+        todo!()
+        // if let Ok(Snapshot {
+        //     keys,
+        //     values,
+        //     clients,
+        //     seqs,
+        // }) = Snapshot::decode(&*snapshot)
+        // {
+        //     self.store.import((keys, values)).unwrap();
+        //     let last_index: HashMap<String, Arc<AtomicU64>> = clients
+        //         .into_iter()
+        //         .zip(seqs.into_iter().map(|v| Arc::new(AtomicU64::new(v))))
+        //         .collect();
+        //     self.last_index = last_index;
+        // }
     }
-    fn handle_set(&mut self, args: SetRequest, sender: Sender<Result<SetReply, Status>>) {
-        if !self.last_index.contains_key(&args.name) {
-            self.last_index
-                .insert(args.name.clone(), Arc::new(AtomicU64::new(0)));
-        }
-        let last_index = self.last_index[&args.name].clone();
-        if args.seq < last_index.load(Ordering::SeqCst) {
-            return sender
-                .send(Err(Status::already_exists("Duplicated Request")))
-                .unwrap_or(());
-        }
-        let res = self.rf.start(&args);
-        if res.is_err() {
-            return sender
-                .send(Err(Status::permission_denied("Not Leader")))
-                .unwrap_or(());
-        }
-        let (index, _term) = res.unwrap();
-        let (tx, rx) = channel();
-        self.pending.insert(index, KvEvent::Set(args, tx));
-
-        tokio::spawn(async move {
-            let reply = match timeout(Duration::from_millis(3000), rx).await {
-                Ok(Ok(Ok(reply))) => {
-                    last_index.store(reply.seq, Ordering::SeqCst);
-                    Ok(reply)
-                }
-                Ok(Ok(Err(status))) => Err(status),
-                Ok(Err(_e)) => Err(Status::cancelled("Recv Error")),
-                Err(_e) => Err(Status::deadline_exceeded("Timeout")),
-            };
-            sender.send(reply).unwrap_or(());
-        });
-    }
-    fn handle_get(&mut self, args: GetRequest, sender: Sender<Result<GetReply, Status>>) {
-        if !self.last_index.contains_key(&args.name) {
-            self.last_index
-                .insert(args.name.clone(), Arc::new(AtomicU64::new(0)));
-        }
-        let last_index = self.last_index[&args.name].clone();
-        if args.seq < last_index.load(Ordering::SeqCst) {
-            return sender
-                .send(Err(Status::already_exists("Duplicated Request")))
-                .unwrap_or(());
-        }
-        let res = self.rf.start(&args);
-        if res.is_err() {
-            return sender
-                .send(Err(Status::permission_denied("Not Leader")))
-                .unwrap_or(());
-        }
-        let (index, _term) = res.unwrap();
-        let (tx, rx) = channel();
-        self.pending.insert(index, KvEvent::Get(args, tx));
-
-        tokio::spawn(async move {
-            let reply = match timeout(Duration::from_millis(3000), rx).await {
-                Ok(Ok(Ok(reply))) => {
-                    last_index.store(reply.seq, Ordering::SeqCst);
-                    Ok(reply)
-                }
-                Ok(Ok(Err(status))) => Err(status),
-                Ok(Err(_e)) => Err(Status::cancelled("Recv Error")),
-                Err(_e) => Err(Status::deadline_exceeded("Timeout")),
-            };
-            sender.send(reply).unwrap_or(());
-        });
-    }
-    fn handle_remove(&mut self, args: RemoveRequest, sender: Sender<Result<RemoveReply, Status>>) {
-        if !self.last_index.contains_key(&args.name) {
-            self.last_index
-                .insert(args.name.clone(), Arc::new(AtomicU64::new(0)));
-        }
-        let last_index = self.last_index[&args.name].clone();
-        if args.seq < last_index.load(Ordering::SeqCst) {
-            return sender
-                .send(Err(Status::already_exists("Duplicated Request")))
-                .unwrap_or(());
-        }
-        let res = self.rf.start(&args);
-        if res.is_err() {
-            return sender
-                .send(Err(Status::permission_denied("Not Leader")))
-                .unwrap_or(());
-        }
-        let (index, _term) = res.unwrap();
-        let (tx, rx) = channel();
-        self.pending.insert(index, KvEvent::Remove(args, tx));
-
-        tokio::spawn(async move {
-            let reply = match timeout(Duration::from_millis(3000), rx).await {
-                Ok(Ok(Ok(reply))) => {
-                    last_index.store(reply.seq, Ordering::SeqCst);
-                    Ok(reply)
-                }
-                Ok(Ok(Err(status))) => Err(status),
-                Ok(Err(_e)) => Err(Status::cancelled("Recv Error")),
-                Err(_e) => Err(Status::deadline_exceeded("Timeout")),
-            };
-            sender.send(reply).unwrap_or(());
-        });
-    }
+    fn handle_set(&mut self, args: SetRequest, sender: Sender<RpcResult<SetReply>>) {}
+    fn handle_get(&mut self, args: GetRequest, sender: Sender<RpcResult<GetReply>>) {}
+    fn handle_remove(&mut self, args: RemoveRequest, sender: Sender<RpcResult<RemoveReply>>) {}
 
     fn handle_apply_msg(&mut self, msg: ApplyMsg) {
         if !msg.command_valid {
@@ -227,97 +132,174 @@ impl KvRaftInner {
             "{} recv [ApplyMsg {} {}]",
             self, msg.command_valid, msg.command_index
         );
-        let index = msg.command_index;
-        if let Ok(req) = SetRequest::decode(&*msg.command) {
-            if !self.last_index.contains_key(&req.name) {
-                self.last_index
-                    .insert(req.name.clone(), Arc::new(AtomicU64::new(0)));
-            }
-            if let Some(KvEvent::Set(args, tx)) = self.pending.remove(&index) {
-                if req.seq == args.seq
-                    && req.seq > self.last_index[&req.name].load(Ordering::SeqCst)
+        let _index = msg.command_index;
+        if let Ok(_req) = SetRequest::decode(&*msg.command) {
+            // if !self.last_index.contains_key(&req.name) {
+            //     self.last_index
+            //         .insert(req.name.clone(), Arc::new(AtomicU64::new(0)));
+            // }
+            // if let Some(KvEvent::Set(args, tx)) = self.pending.remove(&index) {
+            //     if req.seq == args.seq
+            //         && req.seq > self.last_index[&req.name].load(Ordering::SeqCst)
+            //     {
+            //         self.last_index[&req.name].store(req.seq, Ordering::SeqCst);
+            //         let reply = self
+            //             .store
+            //             .set(req.key, req.value)
+            //             .map(|_| SetReply {
+            //                 message: "OK".to_owned(),
+            //                 name: args.name,
+            //                 seq: args.seq,
+            //             })
+            //             .map_err(|e| Status::internal(e.to_string()));
+            //         return tx.send(reply).unwrap_or(());
+            //     } else {
+            //         return tx.send(Err(KvRpcError::DuplicatedRequest)).unwrap_or(());
+            //     }
+            // }
+        }
+        if let Ok(_req) = GetRequest::decode(&*msg.command) {
+            // if !self.last_index.contains_key(&req.name) {
+            //     self.last_index
+            //         .insert(req.name.clone(), Arc::new(AtomicU64::new(0)));
+            // }
+            // if let Some(KvEvent::Get(args, tx)) = self.pending.remove(&index) {
+            //     if req.seq == args.seq
+            //         && req.seq > self.last_index[&req.name].load(Ordering::SeqCst)
+            //     {
+            //         self.last_index[&req.name].store(req.seq, Ordering::SeqCst);
+            //         let reply = self
+            //             .store
+            //             .get(req.key)
+            //             .map(|value| GetReply {
+            //                 message: value.unwrap_or(String::from("Key not found")),
+            //                 name: args.name,
+            //                 seq: args.seq,
+            //             })
+            //             .map_err(|e| Status::internal(e.to_string()));
+            //         tx.send(reply).unwrap_or(());
+            //     } else {
+            //         return tx
+            //             .send(Err(Status::already_exists("Duplicated Request")))
+            //             .unwrap_or(());
+            //     }
+            // }
+        }
+        if let Ok(_req) = RemoveRequest::decode(&*msg.command) {
+            // if !self.last_index.contains_key(&req.name) {
+            //     self.last_index
+            //         .insert(req.name.clone(), Arc::new(AtomicU64::new(0)));
+            // }
+            // if let Some(KvEvent::Remove(args, tx)) = self.pending.remove(&index) {
+            //     if req.seq == args.seq
+            //         && req.seq > self.last_index[&req.name].load(Ordering::SeqCst)
+            //     {
+            //         self.last_index[&req.name].store(req.seq, Ordering::SeqCst);
+            //         let reply = self
+            //             .store
+            //             .remove(req.key)
+            //             .map(|_| RemoveReply {
+            //                 message: String::from("OK"),
+            //                 name: args.name,
+            //                 seq: args.seq,
+            //             })
+            //             .map_err(|e| Status::internal(e.to_string()));
+            //         tx.send(reply).unwrap_or(());
+            //     } else {
+            //         return tx
+            //             .send(Err(Status::already_exists("Duplicated Request")))
+            //             .unwrap_or(());
+            //     }
+            // }
+        }
+        if let Ok(req) = PrewriteRequest::decode(&*msg.command) {
+            self.handle_prewrite(req);
+        }
+        if let Ok(req) = CommitRequest::decode(&*msg.command) {
+            self.handle_commit(req);
+        }
+    }
+}
+
+impl KvRaftInner {
+    fn handle_prewrite(&mut self, req: PrewriteRequest) {
+        if let Some(KvEvent::Prewrite(_args, tx)) = self.pending.remove(&(req.ts, req.seq)) {
+            if req.seq > self.last_index[&req.ts].load(Ordering::SeqCst) {
+                self.last_index[&req.ts].store(req.seq, Ordering::SeqCst);
+                if self
+                    .store
+                    .read_write(req.key.clone(), Some(req.ts), None)
+                    .is_some()
                 {
-                    self.last_index[&req.name].store(req.seq, Ordering::SeqCst);
-                    let reply = self
-                        .store
-                        .set(req.key, req.value)
-                        .map(|_| SetReply {
-                            message: "OK".to_owned(),
-                            name: args.name,
-                            seq: args.seq,
-                        })
-                        .map_err(|e| Status::internal(e.to_string()));
-                    return tx.send(reply).unwrap_or(());
-                } else {
-                    return tx
-                        .send(Err(Status::already_exists("Duplicated Request")))
-                        .unwrap_or(());
+                    tx.send(Err(KvRpcError::Abort(String::from("find write after ts"))))
+                        .unwrap();
+                    return;
                 }
+                if self.store.read_lock(req.key.clone(), None, None).is_some() {
+                    tx.send(Err(KvRpcError::Abort(String::from("find another lock"))))
+                        .unwrap();
+                    return;
+                }
+                self.store
+                    .write_data(req.key.clone(), req.ts, req.value.clone());
+                self.store
+                    .write_lock(req.key.clone(), req.ts, req.primary.clone());
+                let reply = PrewriteReply {
+                    ok: true,
+                    seq: req.seq,
+                };
+                tx.send(Ok(reply)).unwrap();
             }
         }
-        if let Ok(req) = GetRequest::decode(&*msg.command) {
-            if !self.last_index.contains_key(&req.name) {
-                self.last_index
-                    .insert(req.name.clone(), Arc::new(AtomicU64::new(0)));
-            }
-            if let Some(KvEvent::Get(args, tx)) = self.pending.remove(&index) {
-                if req.seq == args.seq
-                    && req.seq > self.last_index[&req.name].load(Ordering::SeqCst)
-                {
-                    self.last_index[&req.name].store(req.seq, Ordering::SeqCst);
-                    let reply = self
+    }
+    fn handle_commit(&mut self, req: CommitRequest) {
+        if let Some(KvEvent::Commit(_args, tx)) = self.pending.remove(&(req.commit_ts, req.seq)) {
+            if req.seq > self.last_index[&req.commit_ts].load(Ordering::SeqCst) {
+                self.last_index[&req.commit_ts].store(req.seq, Ordering::SeqCst);
+                if req.is_primary {
+                    if self
                         .store
-                        .get(req.key)
-                        .map(|value| GetReply {
-                            message: value.unwrap_or(String::from("Key not found")),
-                            name: args.name,
-                            seq: args.seq,
-                        })
-                        .map_err(|e| Status::internal(e.to_string()));
-                    tx.send(reply).unwrap_or(());
-                } else {
-                    return tx
-                        .send(Err(Status::already_exists("Duplicated Request")))
-                        .unwrap_or(());
+                        .read_lock(req.primary, Some(req.start_ts), Some(req.start_ts))
+                        .is_none()
+                    {
+                        tx.send(Err(KvRpcError::Abort(String::from("primary lock missing"))))
+                            .unwrap();
+                        return;
+                    }
                 }
+                self.store
+                    .write_write(req.key.clone(), req.commit_ts, req.start_ts);
+                self.store.erase_lock(req.key, req.commit_ts);
+                let reply = CommitReply {
+                    ok: true,
+                    seq: req.seq,
+                };
+                tx.send(Ok(reply)).unwrap();
             }
         }
-        if let Ok(req) = RemoveRequest::decode(&*msg.command) {
-            if !self.last_index.contains_key(&req.name) {
-                self.last_index
-                    .insert(req.name.clone(), Arc::new(AtomicU64::new(0)));
-            }
-            if let Some(KvEvent::Remove(args, tx)) = self.pending.remove(&index) {
-                if req.seq == args.seq
-                    && req.seq > self.last_index[&req.name].load(Ordering::SeqCst)
-                {
-                    self.last_index[&req.name].store(req.seq, Ordering::SeqCst);
-                    let reply = self
-                        .store
-                        .remove(req.key)
-                        .map(|_| RemoveReply {
-                            message: String::from("OK"),
-                            name: args.name,
-                            seq: args.seq,
-                        })
-                        .map_err(|e| Status::internal(e.to_string()));
-                    tx.send(reply).unwrap_or(());
-                } else {
-                    return tx
-                        .send(Err(Status::already_exists("Duplicated Request")))
-                        .unwrap_or(());
-                }
-            }
+    }
+}
+
+impl KvRaftInner {
+    fn check_duplicate(&mut self, ts: u64, seq: u64) -> RpcResult<()> {
+        if self.last_index.get(&ts).is_none() {
+            self.last_index.insert(ts, Arc::new(AtomicU64::new(0)));
+        }
+        if self.last_index.get(&ts).unwrap().load(Ordering::SeqCst) >= seq {
+            Err(KvRpcError::DuplicatedRequest)
+        } else {
+            Ok(())
         }
     }
 }
 
 #[derive(Debug)]
 pub enum KvEvent {
-    Set(SetRequest, Sender<Result<SetReply, Status>>),
-    Get(GetRequest, Sender<Result<GetReply, Status>>),
-    Remove(RemoveRequest, Sender<Result<RemoveReply, Status>>),
-    Seq(String, Sender<u64>),
+    Set(SetRequest, Sender<RpcResult<SetReply>>),
+    Get(GetRequest, Sender<RpcResult<GetReply>>),
+    Remove(RemoveRequest, Sender<RpcResult<RemoveReply>>),
+    Prewrite(PrewriteRequest, Sender<RpcResult<PrewriteReply>>),
+    Commit(CommitRequest, Sender<RpcResult<CommitReply>>),
 }
 
 impl Stream for KvRaftInner {
@@ -343,13 +325,56 @@ impl Stream for KvRaftInner {
                         self.handle_remove(args, tx);
                         Poll::Ready(Some(()))
                     }
-                    KvEvent::Seq(name, tx) => {
-                        let seq = self
-                            .last_index
-                            .get(&name)
-                            .map(|v| v.load(Ordering::SeqCst))
-                            .unwrap_or(0);
-                        tx.send(seq).unwrap();
+                    KvEvent::Prewrite(args, sender) => {
+                        if let Err(e) = self.check_duplicate(args.ts, args.seq) {
+                            sender.send(Err(e)).unwrap();
+                        } else if let Ok((_index, _term)) = self.rf.start(&args) {
+                            let (tx, rx) = channel();
+                            self.pending
+                                .insert((args.ts, args.seq), KvEvent::Prewrite(args.clone(), tx));
+                            let last_index = self.last_index.get(&args.ts).unwrap().clone();
+                            tokio::spawn(async move {
+                                let reply = match timeout(Duration::from_millis(3000), rx).await {
+                                    Ok(Ok(Ok(reply))) => {
+                                        last_index.store(reply.seq, Ordering::SeqCst);
+                                        Ok(reply)
+                                    }
+                                    Ok(Ok(Err(status))) => Err(status),
+                                    Ok(Err(_e)) => Err(KvRpcError::Recv),
+                                    Err(_e) => Err(KvRpcError::Timeout),
+                                };
+                                sender.send(reply).unwrap_or(());
+                            });
+                        } else {
+                            sender.send(Err(KvRpcError::NotLeader)).unwrap_or(());
+                        }
+                        Poll::Ready(Some(()))
+                    }
+                    KvEvent::Commit(args, sender) => {
+                        if let Err(e) = self.check_duplicate(args.commit_ts, args.seq) {
+                            sender.send(Err(e)).unwrap();
+                        } else if let Ok((_index, _term)) = self.rf.start(&args) {
+                            let (tx, rx) = channel();
+                            self.pending.insert(
+                                (args.commit_ts, args.seq),
+                                KvEvent::Commit(args.clone(), tx),
+                            );
+                            let last_index = self.last_index.get(&args.commit_ts).unwrap().clone();
+                            tokio::spawn(async move {
+                                let reply = match timeout(Duration::from_millis(3000), rx).await {
+                                    Ok(Ok(Ok(reply))) => {
+                                        last_index.store(reply.seq, Ordering::SeqCst);
+                                        Ok(reply)
+                                    }
+                                    Ok(Ok(Err(status))) => Err(status),
+                                    Ok(Err(_e)) => Err(KvRpcError::Recv),
+                                    Err(_e) => Err(KvRpcError::Timeout),
+                                };
+                                sender.send(reply).unwrap_or(());
+                            });
+                        } else {
+                            sender.send(Err(KvRpcError::NotLeader)).unwrap_or(());
+                        }
                         Poll::Ready(Some(()))
                     }
                 };
@@ -384,7 +409,7 @@ impl KvRaftNode {
     /// Create a new KvRaftNode
     pub fn new(
         rf: raft::RaftNode,
-        store: EngineKind,
+        store: MultiStore,
         me: usize,
         persister: Arc<dyn persister::Persister>,
         maxraftstate: Option<usize>,
@@ -436,8 +461,9 @@ impl KvRpc for KvRaftNode {
         let (tx, rx) = channel();
         self.sender.send(KvEvent::Set(req, tx)).unwrap();
         rx.await
-            .unwrap_or_else(|e| Err(Status::cancelled(e.to_string())))
+            .unwrap_or_else(|_| Err(KvRpcError::Recv))
             .map(|reply| Response::new(reply))
+            .map_err(|e| e.into())
     }
     async fn get(
         &self,
@@ -447,8 +473,9 @@ impl KvRpc for KvRaftNode {
         let (tx, rx) = channel();
         self.sender.send(KvEvent::Get(req, tx)).unwrap();
         rx.await
-            .unwrap_or_else(|e| Err(Status::cancelled(e.to_string())))
+            .unwrap_or_else(|_| Err(KvRpcError::Recv))
             .map(|reply| Response::new(reply))
+            .map_err(|e| e.into())
     }
     async fn remove(
         &self,
@@ -458,21 +485,34 @@ impl KvRpc for KvRaftNode {
         let (tx, rx) = channel();
         self.sender.send(KvEvent::Remove(req, tx)).unwrap();
         rx.await
-            .unwrap_or_else(|e| Err(Status::cancelled(e.to_string())))
+            .unwrap_or_else(|_| Err(KvRpcError::Recv))
             .map(|reply| Response::new(reply))
+            .map_err(|e| e.into())
     }
 
     async fn prewrite(
         &self,
-        _request: Request<PrewriteRequest>,
+        request: Request<PrewriteRequest>,
     ) -> std::result::Result<Response<PrewriteReply>, Status> {
-        todo!()
+        let req = request.into_inner();
+        let (tx, rx) = channel();
+        self.sender.send(KvEvent::Prewrite(req, tx)).unwrap();
+        rx.await
+            .unwrap_or_else(|_| Err(KvRpcError::Recv))
+            .map(|reply| Response::new(reply))
+            .map_err(|e| e.into())
     }
 
     async fn commit(
         &self,
-        _request: Request<CommitRequest>,
+        request: Request<CommitRequest>,
     ) -> std::result::Result<Response<CommitReply>, Status> {
-        todo!()
+        let req = request.into_inner();
+        let (tx, rx) = channel();
+        self.sender.send(KvEvent::Commit(req, tx)).unwrap();
+        rx.await
+            .unwrap_or_else(|_| Err(KvRpcError::Recv))
+            .map(|reply| Response::new(reply))
+            .map_err(|e| e.into())
     }
 }

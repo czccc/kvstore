@@ -56,28 +56,35 @@ message RemoveReply {
 }
 
 message Write {
-  bytes row = 1;
-  bytes col = 2;
-  bytes value = 3;
+  string key = 1;
+  string value = 3;
 }
 
 message PrewriteRequest {
-  Write w = 1;
-  Write primary = 2;
-  uint64 ts = 3;
-  uint64 seq = 4;
+  string key = 1;
+  string value = 2;
+  string primary = 3;
+  uint64 ts = 4;
+  uint64 seq = 5;
 }
-message PrewriteReply { bool ok = 1; }
+message PrewriteReply {
+  bool ok = 1;
+  uint64 seq = 2;
+}
 
 message CommitRequest {
   bool is_primary = 1;
-  Write w = 2;
-  uint64 start_ts = 3;
-  uint64 commit_ts = 4;
-  uint64 seq = 5;
+  string primary = 2;
+  string key = 3;
+  uint64 start_ts = 4;
+  uint64 commit_ts = 5;
+  uint64 seq = 6;
 }
 
-message CommitReply { bool ok = 1; }
+message CommitReply {
+  bool ok = 1;
+  uint64 seq = 2;
+}
 
 message Snapshot {
   repeated string keys = 1;

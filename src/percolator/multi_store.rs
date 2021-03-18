@@ -84,20 +84,23 @@ impl MultiStore {
 
     /// Writes a record to a specified column in MemoryStorage.
     #[inline]
-    pub fn write_data(&mut self, key: String, ts: u64, value: DataValue) {
+    pub fn write_data(&mut self, key: String, ts: u64, value: String) {
         let key = Key::new(key, ts);
+        let value = DataValue::new(value);
         self.data.set(key.to_string(), value.to_string()).unwrap();
     }
     /// Writes a record to a specified column in MemoryStorage.
     #[inline]
-    pub fn write_lock(&mut self, key: String, ts: u64, value: LockValue) {
+    pub fn write_lock(&mut self, key: String, ts: u64, primary: String) {
         let key = Key::new(key, ts);
+        let value = LockValue::new(primary);
         self.lock.set(key.to_string(), value.to_string()).unwrap();
     }
     /// Writes a record to a specified column in MemoryStorage.
     #[inline]
-    pub fn write_write(&mut self, key: String, ts: u64, value: WriteValue) {
+    pub fn write_write(&mut self, key: String, ts: u64, value: u64) {
         let key = Key::new(key, ts);
+        let value = WriteValue::new(value);
         self.write.set(key.to_string(), value.to_string()).unwrap();
     }
 

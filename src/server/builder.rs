@@ -108,11 +108,7 @@ impl KvsServerBuilder {
                 let per = Arc::new(FilePersister::with_path(info.path.clone()));
                 let (tx, rx) = unbounded_channel();
                 let raft = RaftNode::new(peers.clone(), info.id, per.clone(), tx);
-                let store = match self.store_kind.as_ref() {
-                    "kvs" => EngineKind::kvs(KvStore::open(info.path.to_owned()).unwrap()),
-                    "sled" => EngineKind::sled(KvSled::open(info.path.to_owned()).unwrap()),
-                    _unknown => unreachable!(),
-                };
+                let store = MultiStore::new(info.path.clone(), self.store_kind.clone());
                 let kv_raft = KvRaftNode::new(
                     raft.clone(),
                     store,

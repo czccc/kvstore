@@ -2,7 +2,7 @@ use chrono::prelude::*;
 use std::{
     fmt::Display,
     str::FromStr,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
 pub enum Column {
@@ -89,13 +89,10 @@ pub struct LockValue {
 
 impl LockValue {
     /// Create a new LockValue struct
-    pub fn new(primary: String, ttl: Instant) -> Self {
-        let system_now = SystemTime::now();
-        let instant_now = Instant::now();
-        let approx = system_now - (instant_now - ttl);
+    pub fn new(primary: String) -> Self {
         Self {
             primary,
-            ttl: approx.into(),
+            ttl: SystemTime::now().into(),
         }
     }
     /// Get the string value of primary
@@ -167,8 +164,7 @@ mod tests {
     #[test]
     fn test_lock_value() {
         assert_eq!(2, 1 + 1);
-        let now = Instant::now();
-        let value = LockValue::new(String::from("some value"), now);
+        let value = LockValue::new(String::from("some value"));
         let ss = value.to_string();
         println!("{}", ss);
         let new_value = LockValue::from_str(&ss).unwrap();
