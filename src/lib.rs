@@ -1,4 +1,4 @@
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 //! A key-value store system
 
 #![allow(dead_code)]
@@ -39,7 +39,9 @@ pub mod preclude {
         DataValue, Key, LockValue, MultiStore, TimestampOracle, WriteValue,
     };
     pub use crate::raft::{FilePersister, KvRaftNode, Persister, RaftNode};
-    pub(crate) use crate::rpc::kvs_service::*;
-    pub(crate) use crate::rpc::raft_service::*;
+    #[allow(missing_docs)]
+    pub use crate::rpc::kvs_service::*;
+    #[allow(missing_docs)]
+    pub use crate::rpc::raft_service::*;
     pub use crate::server::{KvsServer, KvsServerBuilder};
 }

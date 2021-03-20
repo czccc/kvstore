@@ -66,8 +66,12 @@ message CommitReply {
 }
 
 message Snapshot {
-  repeated string keys = 1;
-  repeated string values = 2;
-  repeated string clients = 3;
-  repeated uint64 seqs = 4;
+  repeated string d_keys = 1;
+  repeated string d_values = 2;
+  repeated string l_keys = 3;
+  repeated string l_values = 4;
+  repeated string w_keys = 5;
+  repeated string w_values = 6;
+  repeated uint64 timestamps = 7;
+  repeated uint64 seqs = 8;
 }

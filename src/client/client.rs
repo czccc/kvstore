@@ -44,6 +44,10 @@ impl KvsClient {
 // }
 
 impl KvsClient {
+    /// determined whether txn is started or not
+    pub fn txn_is_started(&self) -> bool {
+        self.ts.is_some()
+    }
     /// Send a request to server and get the max seq number of this client's name
     pub async fn get_timestamp(&mut self) -> Result<u64> {
         let req = TsRequest {
@@ -72,48 +76,20 @@ impl KvsClient {
     /// Send set command to server, and process the response.
     pub async fn set(&mut self, key: String, value: String) -> Result<()> {
         self.txn_start().await?;
-        let _value = self.get(key.clone()).await;
+        let _value = self.txn_get(key.clone()).await;
         self.txn_set(key, value)?;
         self.txn_commit().await
     }
     /// Send get command to server, and process the response.
     pub async fn get(&mut self, key: String) -> Result<String> {
         self.txn_start().await?;
-        self.seq += 1;
-        let req = GetRequest {
-            key,
-            ts: self.ts.unwrap(),
-            seq: self.seq,
-        };
-        for client in self.servers.iter_mut() {
-            // let call = |req| client.txn_get(Request::new(req.clone()));
-            let res = client.txn_get(Request::new(req.clone()));
-            match tokio::time::timeout(self.timeout, res).await {
-                Ok(Ok(res)) => {
-                    let res = res.into_inner();
-                    // println!("{}", res.message);
-                    return Ok(res.message);
-                }
-                Ok(Err(e)) if e.code() == Code::PermissionDenied => {
-                    continue;
-                }
-                Ok(Err(e)) if e.code() == Code::NotFound => {
-                    return Err(KvError::KeyNotFound);
-                }
-                Ok(Err(e)) => return Err(KvError::StringError(e.to_string())),
-                Err(e) => {
-                    info!("{}", e.to_string());
-                    continue;
-                }
-            }
-        }
-
-        Err(KvError::Unknown)
+        self.txn_get(key.clone()).await
     }
+
     /// Send remove command to server, and process the response.
     pub async fn remove(&mut self, key: String) -> Result<()> {
         self.txn_start().await?;
-        let _value = self.get(key.clone()).await?;
+        let _value = self.txn_get(key.clone()).await?;
         self.txn_delete(key)?;
         self.txn_commit().await
     }
@@ -147,6 +123,40 @@ impl KvsClient {
         self.write_infos.push(info);
         Ok(())
     }
+    /// Get a value
+    pub async fn txn_get(&mut self, key: String) -> Result<String> {
+        self.seq += 1;
+        let req = GetRequest {
+            key,
+            ts: self.ts.unwrap(),
+            seq: self.seq,
+        };
+        for client in self.servers.iter_mut() {
+            // let call = |req| client.txn_get(Request::new(req.clone()));
+            let res = client.txn_get(Request::new(req.clone()));
+            match tokio::time::timeout(self.timeout, res).await {
+                Ok(Ok(res)) => {
+                    let res = res.into_inner();
+                    // println!("{}", res.message);
+                    return Ok(res.message);
+                }
+                Ok(Err(e)) if e.code() == Code::PermissionDenied => {
+                    continue;
+                }
+                Ok(Err(e)) if e.code() == Code::NotFound => {
+                    return Err(KvError::KeyNotFound);
+                }
+                Ok(Err(e)) => return Err(KvError::StringError(e.to_string())),
+                Err(e) => {
+                    info!("{}", e.to_string());
+                    continue;
+                }
+            }
+        }
+
+        Err(KvError::Unknown)
+    }
+    /// prewrite
     async fn txn_prewrite(&mut self, info: WriteInfo, primary: String) -> Result<()> {
         self.seq += 1;
         let req = PrewriteRequest {
@@ -218,7 +228,7 @@ impl KvsClient {
                         return Err(KvError::Unknown);
                     }
                 }
-                Ok(Err(e)) if e.code() == Code::PermissionDenied => {
+                Ok(Err(e)) if e.code() == Code::PermissionDenied || e.code() == Code::DataLoss => {
                     continue;
                 }
                 Ok(Err(e)) => return Err(KvError::StringError(e.to_string())),

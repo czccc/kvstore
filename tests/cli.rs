@@ -333,7 +333,7 @@ fn cli_access_basic_server_kvs_engine() {
 
 #[test]
 fn cli_access_basic_server_sled_engine() {
-    cli_access_basic_server("sled", "127.0.0.1:4005");
+    cli_access_basic_server("sled", "127.0.0.1:4020");
 }
 
 fn cli_access_raft_server(engine: &str, addrs: Vec<&str>) {

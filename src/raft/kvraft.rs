@@ -46,12 +46,12 @@ pub struct KvRaftInner {
 
 impl std::fmt::Display for KvRaftInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // let desp = if self.rf.is_leader() {
-        //     String::from("Leader")
-        // } else {
-        //     String::from("Follow")
-        // };
-        write!(f, "[{} {}]", "Server", self.me)
+        let desp = if self.rf.is_leader() {
+            String::from("Leader")
+        } else {
+            String::from("Follow")
+        };
+        write!(f, "[{} {}]", desp, self.me)
     }
 }
 
@@ -65,7 +65,6 @@ impl KvRaftInner {
         receiver: UnboundedReceiver<KvEvent>,
         apply_ch: UnboundedReceiver<ApplyMsg>,
     ) -> KvRaftInner {
-        // let (tx, apply_ch) = unbounded_channel();
         let snapshot = persister.snapshot();
 
         let mut server = KvRaftInner {
@@ -83,40 +82,47 @@ impl KvRaftInner {
     }
 
     fn create_snapshot(&self) -> Vec<u8> {
-        todo!()
-        // let (keys, values) = self.store.export().unwrap();
-        // let snapshot = Snapshot {
-        //     keys,
-        //     values,
-        //     clients: self.last_index.keys().cloned().collect(),
-        //     seqs: self
-        //         .last_index
-        //         .values()
-        //         .cloned()
-        //         .map(|v| v.load(Ordering::SeqCst))
-        //         .collect(),
-        // };
-        // let mut buf = Vec::new();
-        // snapshot.encode(&mut buf).unwrap();
-        // buf
+        let data = self.store.export().unwrap();
+        let snapshot = Snapshot {
+            d_keys: data.get(0).unwrap().clone(),
+            d_values: data.get(1).unwrap().clone(),
+            l_keys: data.get(2).unwrap().clone(),
+            l_values: data.get(3).unwrap().clone(),
+            w_keys: data.get(4).unwrap().clone(),
+            w_values: data.get(5).unwrap().clone(),
+            timestamps: self.last_index.keys().cloned().collect(),
+            seqs: self
+                .last_index
+                .values()
+                .cloned()
+                .map(|v| v.load(Ordering::SeqCst))
+                .collect(),
+        };
+        let mut buf = Vec::new();
+        snapshot.encode(&mut buf).unwrap();
+        buf
     }
 
-    fn restore_from_snapshot(&mut self, _snapshot: Vec<u8>) {
-        // todo!()
-        // if let Ok(Snapshot {
-        //     keys,
-        //     values,
-        //     clients,
-        //     seqs,
-        // }) = Snapshot::decode(&*snapshot)
-        // {
-        //     self.store.import((keys, values)).unwrap();
-        //     let last_index: HashMap<String, Arc<AtomicU64>> = clients
-        //         .into_iter()
-        //         .zip(seqs.into_iter().map(|v| Arc::new(AtomicU64::new(v))))
-        //         .collect();
-        //     self.last_index = last_index;
-        // }
+    fn restore_from_snapshot(&mut self, snapshot: Vec<u8>) {
+        if let Ok(Snapshot {
+            d_keys,
+            d_values,
+            l_keys,
+            l_values,
+            w_keys,
+            w_values,
+            timestamps,
+            seqs,
+        }) = Snapshot::decode(&*snapshot)
+        {
+            let data = vec![d_keys, d_values, l_keys, l_values, w_keys, w_values];
+            self.store.import(data).unwrap();
+            let last_index: HashMap<u64, Arc<AtomicU64>> = timestamps
+                .into_iter()
+                .zip(seqs.into_iter().map(|v| Arc::new(AtomicU64::new(v))))
+                .collect();
+            self.last_index = last_index;
+        }
     }
     fn handle_apply_msg(&mut self, msg: ApplyMsg) {
         if msg.command.is_empty() {

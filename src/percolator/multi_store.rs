@@ -137,6 +137,34 @@ impl MultiStore {
     }
 }
 
+impl MultiStore {
+    pub fn export(&self) -> Result<Vec<Vec<String>>> {
+        let mut res = Vec::new();
+        let data = self.data.export()?;
+        res.push(data.0);
+        res.push(data.1);
+        let data = self.lock.export()?;
+        res.push(data.0);
+        res.push(data.1);
+        let data = self.write.export()?;
+        res.push(data.0);
+        res.push(data.1);
+        Ok(res)
+    }
+    pub fn import(&self, mut data: Vec<Vec<String>>) -> Result<()> {
+        let value = data.pop().unwrap();
+        let key = data.pop().unwrap();
+        self.write.import((key, value))?;
+        let value = data.pop().unwrap();
+        let key = data.pop().unwrap();
+        self.lock.import((key, value))?;
+        let value = data.pop().unwrap();
+        let key = data.pop().unwrap();
+        self.data.import((key, value))?;
+        Ok(())
+    }
+}
+
 fn generate_key(key: &str, ts: u64) -> String {
     Key::new(key.to_string(), ts).to_string()
 }
