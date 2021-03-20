@@ -1,8 +1,4 @@
-use std::{
-    net::SocketAddr,
-    path::PathBuf,
-    sync::{atomic::AtomicU64, Arc},
-};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use tokio::sync::mpsc::unbounded_channel;
 use tonic::transport::Channel;
@@ -100,7 +96,7 @@ impl KvsServerBuilder {
             .map(|node| Channel::from_shared(node).unwrap().connect_lazy().unwrap())
             .map(|res| RaftRpcClient::new(res))
             .collect();
-        let ts_oracle = Arc::new(AtomicU64::new(1));
+        let ts_oracle = TimestampOracle::open(self.root_path.clone()).unwrap();
         let nodes: Vec<(RaftNode, KvRaftNode, SocketAddr)> = self
             .info
             .iter()
@@ -127,12 +123,9 @@ impl KvsServerBuilder {
     fn build_basic_server(self) -> KvsServer {
         assert!(self.info.len() == 1);
         let info = self.info.first().unwrap();
-        let store = match self.store_kind.as_ref() {
-            "kvs" => EngineKind::kvs(KvStore::open(info.path.to_owned()).unwrap()),
-            "sled" => EngineKind::sled(KvSled::open(info.path.to_owned()).unwrap()),
-            _unknown => unreachable!(),
-        };
-        let server = KvsBasicServer::new(store, info.addr).unwrap();
+        let store = MultiStore::new(info.path.clone(), self.store_kind.clone());
+        let ts_oracle = TimestampOracle::open(info.path.clone()).unwrap();
+        let server = KvsBasicServer::new(store, info.addr, ts_oracle).unwrap();
         KvsServer::new(ServerKind::Basic(server))
     }
 }

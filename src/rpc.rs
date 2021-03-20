@@ -5,8 +5,8 @@ pub mod kvs_service {
     pub use include::kv_rpc_client::KvRpcClient;
     pub use include::kv_rpc_server::{KvRpc, KvRpcServer};
     pub use include::{
-        CommitReply, CommitRequest, GetReply, GetRequest, PrewriteReply, PrewriteRequest,
-        RemoveReply, RemoveRequest, SetReply, SetRequest, Snapshot, TsReply, TsRequest,
+        CommitReply, CommitRequest, GetReply, GetRequest, PrewriteReply, PrewriteRequest, Snapshot,
+        TsReply, TsRequest, WriteOp,
     };
 }
 
@@ -17,8 +17,8 @@ pub mod raft_service {
     pub use include::raft_rpc_client::RaftRpcClient;
     pub use include::raft_rpc_server::{RaftRpc, RaftRpcServer};
     pub use include::{
-        AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply, LogEntry,
-        RequestVoteArgs, RequestVoteReply,
+        AppendEntriesArgs, AppendEntriesReply, HeartBeatArgs, HeartBeatReply, InstallSnapshotArgs,
+        InstallSnapshotReply, LogEntry, RequestVoteArgs, RequestVoteReply,
     };
 
     impl std::fmt::Display for RequestVoteArgs {

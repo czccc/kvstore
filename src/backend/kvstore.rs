@@ -217,6 +217,7 @@ impl KvsEngine for KvStore {
             .range(range)
             .map(|(key, _cmd)| key.to_owned())
             .collect();
+        drop(index);
         for k in keys.into_iter() {
             self.remove(k)?;
         }

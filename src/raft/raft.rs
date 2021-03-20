@@ -89,7 +89,6 @@ struct RaftInner {
     // auxilary state
     role: RaftRole,
     is_leader: Arc<AtomicBool>,
-    log_index: Arc<AtomicU64>,
 
     // Volatile state on all servers
     commit_index: Arc<AtomicU64>,
@@ -113,7 +112,10 @@ struct RaftInner {
     sender: UnboundedSender<RaftEvent>,
     apply_ch: UnboundedSender<ApplyMsg>,
 
-    //
+    // Read Only
+    read_only: super::read_only::ReadOnly,
+
+    // for stream
     receiver: UnboundedReceiver<RaftEvent>,
     timeout: Delay,
     apply_msg_delay: Delay,
@@ -173,7 +175,6 @@ impl RaftInner {
 
             is_leader: Arc::new(AtomicBool::new(false)),
             role: RaftRole::Follower,
-            log_index: Arc::new(AtomicU64::new(0)),
 
             commit_index: Arc::new(AtomicU64::new(0)),
             last_applied: Arc::new(AtomicU64::new(0)),
@@ -187,6 +188,8 @@ impl RaftInner {
 
             sender: sender.clone(),
             apply_ch,
+
+            read_only: super::read_only::ReadOnly::new(),
 
             // for stream
             receiver,
@@ -305,7 +308,6 @@ impl RaftInner {
                 index,
                 term,
             });
-            self.log_index.store(index, Ordering::SeqCst);
             info!(
                 "{} Receive a Command! Append to [log {} {}]",
                 self, index, term
@@ -315,6 +317,35 @@ impl RaftInner {
             Ok((index, term))
         } else {
             Err(KvError::NotLeader)
+        }
+    }
+    fn start_read_only(&mut self, command: &[u8]) -> Result<(u64, u64)> {
+        let commit_index = self.commit_index.load(Ordering::SeqCst);
+        if self.is_leader.load(Ordering::SeqCst) {
+            if self.term(commit_index).unwrap() == self.current_term.load(Ordering::SeqCst) {
+                self.read_only.add_request(commit_index, command.to_owned());
+                self.send_heart_beat_all();
+                Ok((commit_index, self.last_term()))
+            } else {
+                Err(KvError::StringError(
+                    "New Leader without commit".to_string(),
+                ))
+            }
+        } else {
+            Err(KvError::NotLeader)
+        }
+    }
+
+    fn apply_read_only(&mut self, index: u64, msgs: Vec<Vec<u8>>) {
+        if !self.apply_ch.is_closed() {
+            for msg in msgs {
+                let msg = ApplyMsg {
+                    command_valid: true,
+                    command: msg,
+                    command_index: index,
+                };
+                self.apply_ch.send(msg).expect("Unable send ApplyMsg");
+            }
         }
     }
 
@@ -735,6 +766,88 @@ impl RaftInner {
 }
 
 impl RaftInner {
+    fn send_heart_beat(
+        &self,
+        server: usize,
+        args: HeartBeatArgs,
+    ) -> Receiver<Result<HeartBeatReply>> {
+        let peer = &self.peers[server];
+        let mut peer_clone = peer.clone();
+        let (tx, rx) = channel::<Result<HeartBeatReply>>();
+        tokio::spawn(async move {
+            let res = peer_clone
+                .heart_beat(Request::new(args))
+                .await
+                .map(|resp| resp.into_inner())
+                .map_err(KvError::Rpc);
+            let _ = tx.send(res);
+        });
+        rx
+    }
+
+    fn handle_heart_beat(&mut self, args: HeartBeatArgs) -> HeartBeatReply {
+        let current_term = self.current_term.load(Ordering::SeqCst);
+        if current_term < args.term {
+            self.voted_for = Some(args.leader_id as usize);
+            self.become_follower(args.term);
+            debug!(
+                "{} Become Follower. New Leader id: {}",
+                self, args.leader_id
+            );
+        }
+        let commit_index = self.commit_index.load(Ordering::SeqCst);
+        if args.term < current_term || commit_index < args.leader_commit {
+            HeartBeatReply {
+                term: current_term,
+                success: false,
+                commit_index,
+            }
+        } else {
+            HeartBeatReply {
+                term: current_term,
+                success: true,
+                commit_index,
+            }
+        }
+    }
+
+    fn send_heart_beat_all(&mut self) {
+        debug!("{} Send append entries to ALL RaftNode", self);
+        let beat_count = Arc::new(AtomicUsize::new(1));
+        let term = self.current_term.load(Ordering::SeqCst);
+        let args = HeartBeatArgs {
+            term,
+            leader_id: self.me as i32,
+            leader_commit: self.commit_index.load(Ordering::SeqCst),
+        };
+        for server in 0..self.peers.len() {
+            if server != self.me {
+                let args = args.clone();
+                let tx = self.sender.clone();
+                let peers_num = self.peers.len();
+                let beat_count = beat_count.clone();
+                let rx = self.send_heart_beat(server, args);
+                tokio::spawn(async move {
+                    if let Ok(reply) = rx.await {
+                        if let Ok(reply) = reply {
+                            if reply.term > term {
+                                tx.send(RaftEvent::BecomeFollower(reply.term)).unwrap();
+                            } else if reply.success {
+                                beat_count.fetch_add(1, Ordering::Relaxed);
+                                if beat_count.load(Ordering::SeqCst) > peers_num / 2 {
+                                    tx.send(RaftEvent::ReadOnlyCommit(reply.commit_index))
+                                        .unwrap();
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+}
+
+impl RaftInner {
     fn send_install_snapshot(
         &self,
         server: usize,
@@ -797,10 +910,13 @@ impl RaftInner {
 enum RaftEvent {
     RequestVote(RequestVoteArgs, Sender<RequestVoteReply>),
     AppendEntries(AppendEntriesArgs, Sender<AppendEntriesReply>),
+    HeartBeat(HeartBeatArgs, Sender<HeartBeatReply>),
     InstallSnapshot(InstallSnapshotArgs, Sender<InstallSnapshotReply>),
     BecomeLeader(u64),
     BecomeFollower(u64),
+    ReadOnlyCommit(u64),
     StartCommand(Vec<u8>, Sender<Result<(u64, u64)>>),
+    StartReadOnly(Vec<u8>, Sender<Result<(u64, u64)>>),
     StartSnapshot(Vec<u8>, u64),
     Shutdown,
 }
@@ -859,6 +975,15 @@ impl Stream for RaftInner {
                     let _ = tx.send(reply);
                     Poll::Ready(Some(()))
                 }
+                RaftEvent::HeartBeat(args, tx) => {
+                    let current_term = args.term;
+                    let reply = self.handle_heart_beat(args);
+                    if reply.success || reply.term == current_term {
+                        self.timeout.reset(election_timeout());
+                    }
+                    let _ = tx.send(reply);
+                    Poll::Ready(Some(()))
+                }
                 RaftEvent::InstallSnapshot(args, tx) => {
                     let reply = self.handle_install_snapshot(args);
                     let _ = tx.send(reply);
@@ -867,6 +992,7 @@ impl Stream for RaftInner {
                 RaftEvent::BecomeLeader(term) => {
                     self.become_leader(term);
                     self.timeout.reset(heartbeat_timeout());
+                    self.start(&Vec::new()).unwrap();
                     self.send_append_entries_all();
                     Poll::Ready(Some(()))
                 }
@@ -875,9 +1001,19 @@ impl Stream for RaftInner {
                     self.timeout.reset(election_timeout());
                     Poll::Ready(Some(()))
                 }
+                RaftEvent::ReadOnlyCommit(commit) => {
+                    let msgs = self.read_only.pop_requests(commit);
+                    self.apply_read_only(commit, msgs);
+                    Poll::Ready(Some(()))
+                }
                 RaftEvent::StartCommand(command, tx) => {
                     debug!("{} Exexutor -- Receive command!", self);
                     let _ = tx.send(self.start(&command));
+                    Poll::Ready(Some(()))
+                }
+                RaftEvent::StartReadOnly(command, tx) => {
+                    debug!("{} Exexutor -- Receive command!", self);
+                    let _ = tx.send(self.start_read_only(&command));
                     Poll::Ready(Some(()))
                 }
                 RaftEvent::StartSnapshot(snapshot, last_applied) => {
@@ -917,7 +1053,6 @@ pub struct RaftNode {
     term: Arc<AtomicU64>,
     is_leader: Arc<AtomicBool>,
     raft_state_size: Arc<AtomicU64>,
-    log_index: Arc<AtomicU64>,
     commit_index: Arc<AtomicU64>,
     last_applied: Arc<AtomicU64>,
 }
@@ -936,7 +1071,6 @@ impl RaftNode {
         let raft_state_size = raft.raft_state_size.clone();
         let commit_index = raft.commit_index.clone();
         let last_applied = raft.last_applied.clone();
-        let log_index = raft.log_index.clone();
 
         let threaded_rt = Builder::new_multi_thread().enable_all().build().unwrap();
         let handle = thread::Builder::new()
@@ -955,7 +1089,6 @@ impl RaftNode {
             handle: Arc::new(Mutex::new(handle)),
             me,
             sender,
-            log_index,
             term,
             is_leader,
             raft_state_size,
@@ -994,6 +1127,40 @@ impl RaftNode {
             response
         } else {
             debug!("RaftNode {} -- Start a Command but in Not Leader", self.me);
+            Err(KvError::NotLeader)
+        }
+    }
+
+    /// start a command that can encode to Bytes
+    pub fn start_read_only<M>(&self, command: &M) -> Result<(u64, u64)>
+    where
+        M: Message,
+    {
+        if self.is_leader() {
+            let mut buf = vec![];
+            // labcodec::encode(command, &mut buf).unwrap();
+            command.encode(&mut buf).unwrap();
+
+            let threaded_rt = Builder::new_multi_thread().build().unwrap();
+
+            let (tx, rx) = channel();
+            let sender = self.sender.clone();
+            let handle = thread::spawn(move || {
+                sender
+                    .send(RaftEvent::StartReadOnly(buf, tx))
+                    .expect("Unable to send start ReadOnly to RaftExecutor");
+
+                let fut_values = async { rx.await };
+                threaded_rt.block_on(fut_values).unwrap()
+            });
+            let response = handle.join().unwrap();
+            debug!(
+                "RaftNode {} -- Start a ReadOnly, response with: {:?}",
+                self.me, response
+            );
+            response
+        } else {
+            debug!("RaftNode {} -- Start a ReadOnly but in Not Leader", self.me);
             Err(KvError::NotLeader)
         }
     }
@@ -1044,6 +1211,19 @@ impl RaftRpc for RaftNode {
     ) -> std::result::Result<Response<AppendEntriesReply>, Status> {
         let (tx, rx) = channel();
         let event = RaftEvent::AppendEntries(args.into_inner(), tx);
+        let _ = self.sender.clone().send(event);
+        let reply = rx.await;
+        reply
+            .map(|reply| Response::new(reply))
+            .map_err(|e| Status::new(Code::Cancelled, e.to_string()))
+    }
+
+    async fn heart_beat(
+        &self,
+        args: Request<HeartBeatArgs>,
+    ) -> std::result::Result<Response<HeartBeatReply>, Status> {
+        let (tx, rx) = channel();
+        let event = RaftEvent::HeartBeat(args.into_inner(), tx);
         let _ = self.sender.clone().send(event);
         let reply = rx.await;
         reply

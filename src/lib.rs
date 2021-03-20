@@ -27,7 +27,7 @@ pub use raft::{FilePersister, KvRaftNode, Persister, RaftNode};
 // pub(crate) use rpc::kvs_service::*;
 // #[allow(missing_docs)]
 // pub(crate) use rpc::raft_service::*;
-pub use percolator::{DataValue, Key, LockValue, MultiStore, WriteValue};
+pub use percolator::{DataValue, Key, LockValue, MultiStore, TimestampOracle, WriteValue};
 pub use server::{KvsServer, KvsServerBuilder};
 
 /// preclude
@@ -35,7 +35,9 @@ pub mod preclude {
     pub use crate::backend::{EngineKind, KvSled, KvStore, KvsEngine};
     pub use crate::client::{KvsClient, KvsClientBuilder};
     pub use crate::error::{KvError, Result};
-    pub use crate::percolator::{DataValue, Key, LockValue, MultiStore, WriteValue};
+    pub use crate::percolator::{
+        DataValue, Key, LockValue, MultiStore, TimestampOracle, WriteValue,
+    };
     pub use crate::raft::{FilePersister, KvRaftNode, Persister, RaftNode};
     pub(crate) use crate::rpc::kvs_service::*;
     pub(crate) use crate::rpc::raft_service::*;

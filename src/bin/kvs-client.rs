@@ -72,6 +72,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let opt: Opt = Opt::from_args();
     // println!("{:?}", opt);
 
@@ -83,6 +84,7 @@ async fn main() -> Result<()> {
             let mut client = KvsClient::builder().add_batch_node(addrs).build();
             match client.get(key).await {
                 Ok(value) => println!("{}", value),
+                Err(KvError::KeyNotFound) => println!("Key not found"),
                 Err(e) => {
                     eprintln!("{}", e);
                     exit(1);

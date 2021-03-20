@@ -84,41 +84,54 @@ impl MultiStore {
 
     /// Writes a record to a specified column in MemoryStorage.
     #[inline]
-    pub fn write_data(&mut self, key: String, ts: u64, value: String) {
+    pub fn write_data(&self, key: String, ts: u64, value: String) {
         let key = Key::new(key, ts);
         let value = DataValue::new(value);
         self.data.set(key.to_string(), value.to_string()).unwrap();
     }
     /// Writes a record to a specified column in MemoryStorage.
     #[inline]
-    pub fn write_lock(&mut self, key: String, ts: u64, primary: String) {
+    pub fn write_lock(&self, key: String, ts: u64, primary: String, op: WriteOp) {
         let key = Key::new(key, ts);
-        let value = LockValue::new(primary);
+        let value = LockValue::new(primary, op);
         self.lock.set(key.to_string(), value.to_string()).unwrap();
     }
     /// Writes a record to a specified column in MemoryStorage.
     #[inline]
-    pub fn write_write(&mut self, key: String, ts: u64, value: u64) {
+    pub fn update_lock(&self, primary: String, ts: u64) {
+        match self.read_lock(primary, Some(ts), Some(ts)) {
+            Some((lock_key, lock_value)) => {
+                let new_value = LockValue::new(lock_value.primary(), lock_value.op());
+                self.lock
+                    .set(lock_key.to_string(), new_value.to_string())
+                    .unwrap();
+            }
+            None => {}
+        }
+    }
+    /// Writes a record to a specified column in MemoryStorage.
+    #[inline]
+    pub fn write_write(&self, key: String, ts: u64, value: u64, op: WriteOp) {
         let key = Key::new(key, ts);
-        let value = WriteValue::new(value);
+        let value = WriteValue::new(value, op);
         self.write.set(key.to_string(), value.to_string()).unwrap();
     }
 
     #[inline]
     /// Erases a record from a specified column in MemoryStorage.
-    pub fn erase_data(&mut self, key: String, commit_ts: u64) {
+    pub fn erase_data(&self, key: String, commit_ts: u64) {
         let range = generate_range(key, None, Some(commit_ts));
         self.data.range_erase(range).unwrap();
     }
     #[inline]
     /// Erases a record from a specified column in MemoryStorage.
-    pub fn erase_lock(&mut self, key: String, commit_ts: u64) {
+    pub fn erase_lock(&self, key: String, commit_ts: u64) {
         let range = generate_range(key, None, Some(commit_ts));
         self.lock.range_erase(range).unwrap();
     }
     #[inline]
     /// Erases a record from a specified column in MemoryStorage.
-    pub fn erase_write(&mut self, key: String, commit_ts: u64) {
+    pub fn erase_write(&self, key: String, commit_ts: u64) {
         let range = generate_range(key, None, Some(commit_ts));
         self.write.range_erase(range).unwrap();
     }

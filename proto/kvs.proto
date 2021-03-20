@@ -4,11 +4,9 @@ package kvs;
 
 service KvRpc {
   rpc get_timestamp(TsRequest) returns (TsReply) {}
-  rpc set(SetRequest) returns (SetReply) {}
-  rpc get(GetRequest) returns (GetReply) {}
-  rpc remove(RemoveRequest) returns (RemoveReply) {}
-  rpc prewrite(PrewriteRequest) returns (PrewriteReply) {}
-  rpc commit(CommitRequest) returns (CommitReply) {}
+  rpc txn_get(GetRequest) returns (GetReply) {}
+  rpc txn_prewrite(PrewriteRequest) returns (PrewriteReply) {}
+  rpc txn_commit(CommitRequest) returns (CommitReply) {}
 }
 
 message TsRequest { string name = 1; }
@@ -18,72 +16,53 @@ message TsReply {
   uint64 ts = 2;
 }
 
-message SetRequest {
-  string key = 1;
-  string value = 2;
-  string name = 3;
-  uint64 seq = 4;
-}
-
-message SetReply {
-  string message = 1;
-  string name = 2;
-  uint64 seq = 3;
-}
-
 message GetRequest {
   string key = 1;
-  string name = 2;
+  uint64 ts = 2;
   uint64 seq = 3;
 }
 
 message GetReply {
   string message = 1;
-  string name = 2;
+  uint64 ts = 2;
   uint64 seq = 3;
 }
 
-message RemoveRequest {
-  string key = 1;
-  string name = 2;
-  uint64 seq = 3;
-}
-
-message RemoveReply {
-  string message = 1;
-  string name = 2;
-  uint64 seq = 3;
-}
-
-message Write {
-  string key = 1;
-  string value = 3;
+enum WriteOp {
+  Put = 0;
+  Delete = 1;
+  Lock = 2;
 }
 
 message PrewriteRequest {
   string key = 1;
   string value = 2;
-  string primary = 3;
-  uint64 ts = 4;
-  uint64 seq = 5;
+  WriteOp op = 3;
+  string primary = 4;
+  uint64 ts = 5;
+  uint64 seq = 6;
 }
+
 message PrewriteReply {
   bool ok = 1;
-  uint64 seq = 2;
+  uint64 ts = 2;
+  uint64 seq = 3;
 }
 
 message CommitRequest {
   bool is_primary = 1;
   string primary = 2;
   string key = 3;
-  uint64 start_ts = 4;
-  uint64 commit_ts = 5;
-  uint64 seq = 6;
+  WriteOp op = 4;
+  uint64 start_ts = 5;
+  uint64 commit_ts = 6;
+  uint64 seq = 7;
 }
 
 message CommitReply {
   bool ok = 1;
-  uint64 seq = 2;
+  uint64 ts = 2;
+  uint64 seq = 3;
 }
 
 message Snapshot {
