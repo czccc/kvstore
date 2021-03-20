@@ -296,7 +296,7 @@ impl KvsClientBuilder {
         self
     }
     /// add a batch of server addr
-    pub fn add_batch_node(mut self, mut addrs: Vec<SocketAddr>) -> KvsClientBuilder {
+    pub fn add_batch_nodes(mut self, mut addrs: Vec<SocketAddr>) -> KvsClientBuilder {
         self.info.append(&mut addrs);
         self
     }

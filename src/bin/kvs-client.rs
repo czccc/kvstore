@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
             if addrs.is_empty() {
                 addrs = (*DEFAULT_ADDRS).to_owned();
             }
-            let mut client = KvsClient::builder().add_batch_node(addrs).build();
+            let mut client = KvsClient::builder().add_batch_nodes(addrs).build();
             match client.get(key).await {
                 Ok(value) => println!("{}", value),
                 Err(KvError::KeyNotFound) => println!("Key not found"),
@@ -110,7 +110,7 @@ async fn main() -> Result<()> {
             if addrs.is_empty() {
                 addrs = (*DEFAULT_ADDRS).to_owned();
             }
-            let mut client = KvsClient::builder().add_batch_node(addrs).build();
+            let mut client = KvsClient::builder().add_batch_nodes(addrs).build();
             match client.set(key, value).await {
                 Ok(_) => {}
                 Err(e) => {
@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
             if addrs.is_empty() {
                 addrs = (*DEFAULT_ADDRS).to_owned();
             }
-            let mut client = KvsClient::builder().add_batch_node(addrs).build();
+            let mut client = KvsClient::builder().add_batch_nodes(addrs).build();
             match client.remove(key).await {
                 Ok(()) => {}
                 Err(e) => {
@@ -133,7 +133,7 @@ async fn main() -> Result<()> {
             }
         }
         Command::Txn { addrs } => {
-            let mut client = KvsClient::builder().add_batch_node(addrs).build();
+            let mut client = KvsClient::builder().add_batch_nodes(addrs).build();
 
             let stdin = std::io::stdin();
             let mut handle = stdin.lock();
